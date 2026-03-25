@@ -1,4 +1,4 @@
--- claude-code.nvim — See what Claude Code is changing in real time
+-- cc-watcher.nvim — See what Claude Code is changing in real time
 --
 -- Shows a sidebar of files Claude edited, inline diffs with colored
 -- highlights, and sign column indicators for changed lines.
@@ -10,15 +10,11 @@
 local M = {}
 
 local defaults = {
-	-- Sidebar width
 	sidebar_width = 36,
-	-- Keymaps (set to false to disable)
 	keys = {
 		toggle_sidebar = "<leader>cs",
 		toggle_diff = "<leader>cd",
 	},
-	-- Auto-apply sign column indicators when files change
-	auto_signs = true,
 }
 
 M.config = vim.deepcopy(defaults)
@@ -29,11 +25,14 @@ function M.setup(opts)
 	local watcher = require("cc-watcher.watcher")
 	local sidebar = require("cc-watcher.sidebar")
 	local diff = require("cc-watcher.diff")
+	local session = require("cc-watcher.session")
 
 	watcher.setup()
 	sidebar.setup()
 
-	-- Commands
+	-- Start watching the JSONL for event-driven updates
+	session.watch_jsonl()
+
 	vim.api.nvim_create_user_command("ClaudeSidebar", sidebar.toggle, {
 		desc = "Toggle Claude Code changed files sidebar",
 	})
@@ -41,7 +40,6 @@ function M.setup(opts)
 		desc = "Toggle inline diff for current file",
 	})
 
-	-- Keymaps
 	local keys = M.config.keys
 	if keys.toggle_sidebar then
 		vim.keymap.set("n", keys.toggle_sidebar, sidebar.toggle, {

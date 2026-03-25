@@ -278,6 +278,17 @@ function M.setup()
 			end
 		end
 	end)
+
+	-- Event-driven: re-render sidebar when Claude writes to JSONL
+	local jsonl_debounce = nil
+	session.on_jsonl_change(function()
+		if not is_open() then return end
+		if jsonl_debounce then jsonl_debounce:stop() end
+		jsonl_debounce = jsonl_debounce or vim.uv.new_timer()
+		jsonl_debounce:start(300, 0, vim.schedule_wrap(function()
+			M.render()
+		end))
+	end)
 end
 
 return M

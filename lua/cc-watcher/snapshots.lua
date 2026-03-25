@@ -1,11 +1,29 @@
 -- snapshots.lua — Track file contents as nvim sees them
+-- LRU eviction to cap memory. Stores raw string for fast comparison.
 
 local M = {}
 
--- filepath -> { lines = string[], mtime = number }
 local store = {}
-
 local MAX_FILE_SIZE = 10 * 1024 * 1024 -- 10 MB
+local MAX_SNAPSHOTS = 100
+local access_order = {}
+
+local function touch(filepath)
+	for i, fp in ipairs(access_order) do
+		if fp == filepath then
+			table.remove(access_order, i)
+			break
+		end
+	end
+	access_order[#access_order + 1] = filepath
+end
+
+local function evict_oldest()
+	while #access_order > MAX_SNAPSHOTS do
+		local oldest = table.remove(access_order, 1)
+		store[oldest] = nil
+	end
+end
 
 ---@param filepath string absolute path
 function M.take(filepath)
@@ -20,30 +38,42 @@ function M.take(filepath)
 	if data then
 		store[filepath] = {
 			lines = vim.split(data, "\n", { plain = true }),
+			raw = data,
 			mtime = stat.mtime.sec,
 		}
+		touch(filepath)
+		evict_oldest()
 	end
 end
 
----@param filepath string
----@return { lines: string[], mtime: number }|nil
+---@return { lines: string[], raw: string, mtime: number }|nil
 function M.get(filepath)
-	return store[filepath]
+	local snap = store[filepath]
+	if snap then touch(filepath) end
+	return snap
 end
 
----@param filepath string
----@return boolean
 function M.has(filepath)
 	return store[filepath] ~= nil
 end
 
----@param filepath string
 function M.remove(filepath)
 	store[filepath] = nil
+	for i, fp in ipairs(access_order) do
+		if fp == filepath then
+			table.remove(access_order, i)
+			break
+		end
+	end
 end
 
 function M.clear()
 	store = {}
+	access_order = {}
+end
+
+function M.count()
+	return #access_order
 end
 
 return M

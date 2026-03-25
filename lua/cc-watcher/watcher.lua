@@ -36,16 +36,16 @@ function M.mark_changed(filepath)
 	end
 end
 
-local function should_ignore(path)
-	return path:match("/%.git/")
-		or path:match("/node_modules/")
-		or path:match("/target/")
-		or path:match("%.swp$")
-		or path:match("~$")
+function M.should_ignore(path)
+	return path:match("/%.git/") ~= nil
+		or path:find("/node_modules/", 1, true) ~= nil
+		or path:find("/target/", 1, true) ~= nil
+		or path:match("%.swp$") ~= nil
+		or path:sub(-1) == "~"
 end
 
 local function watch_file(filepath)
-	if file_watchers[filepath] or should_ignore(filepath) then return end
+	if file_watchers[filepath] or M.should_ignore(filepath) then return end
 
 	local handle = vim.uv.new_fs_event()
 	if not handle then return end
@@ -65,8 +65,8 @@ local function watch_file(filepath)
 		vim.uv.fs_close(fd)
 		if not data then return end
 
-		local old_text = table.concat(snap.lines, "\n")
-		if data ~= old_text .. "\n" and data ~= old_text then
+		-- Compare against stored raw string (avoids O(n) table.concat)
+		if data ~= snap.raw then
 			M.mark_changed(filepath)
 
 			for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
@@ -108,10 +108,13 @@ function M.setup()
 		end,
 	})
 
-	vim.api.nvim_create_autocmd({ "FocusGained", "BufEnter", "CursorHold" }, {
+	-- Only checktime for buffers without an fs_event watcher
+	vim.api.nvim_create_autocmd({ "FocusGained", "BufEnter" }, {
 		group = augroup,
 		callback = function()
-			if vim.fn.getcmdwintype() == "" then
+			if vim.fn.getcmdwintype() ~= "" then return end
+			local filepath = vim.api.nvim_buf_get_name(0)
+			if filepath ~= "" and not file_watchers[filepath] then
 				vim.cmd("checktime")
 			end
 		end,
