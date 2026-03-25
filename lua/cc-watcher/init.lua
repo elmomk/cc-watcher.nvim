@@ -1,11 +1,4 @@
 -- cc-watcher.nvim — See what Claude Code is changing in real time
---
--- Shows a sidebar of files Claude edited, inline diffs with colored
--- highlights, and sign column indicators for changed lines.
---
--- Reads Claude Code's session JSONL to know exactly which files were
--- touched. Uses libuv fs_event watchers for instant change detection.
--- Diffs against pre-change snapshots, not git HEAD.
 
 local M = {}
 
@@ -29,8 +22,6 @@ function M.setup(opts)
 
 	watcher.setup()
 	sidebar.setup()
-
-	-- Start watching the JSONL for event-driven updates
 	session.watch_jsonl()
 
 	vim.api.nvim_create_user_command("ClaudeSidebar", sidebar.toggle, {
@@ -51,6 +42,23 @@ function M.setup(opts)
 			silent = true, desc = "Claude - toggle inline diff",
 		})
 	end
+
+	-- which-key integration (if available)
+	local wk_ok, wk = pcall(require, "which-key")
+	if wk_ok and wk.add then
+		pcall(wk.add, {
+			{ "<leader>c", group = "Claude Code" },
+		})
+	end
+end
+
+--- Statusline component: returns "" or "󰚩 N" for lualine/heirline
+function M.statusline()
+	local ok, watcher = pcall(require, "cc-watcher.watcher")
+	if not ok then return "" end
+	local n = vim.tbl_count(watcher.get_changed_files())
+	if n == 0 then return "" end
+	return "󰚩 " .. n
 end
 
 return M

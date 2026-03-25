@@ -1,4 +1,5 @@
 -- highlights.lua — All highlight groups, defined once with default = true
+-- Users can override any group in their colorscheme.
 
 local M = {}
 
@@ -24,11 +25,12 @@ function M.setup()
 	hl("ClaudeDir",      { fg = "#6c7086" })
 	hl("ClaudeFile",     { fg = "#cdd6f4" })
 	hl("ClaudeHelp",     { fg = "#585b70" })
+	hl("ClaudeStats",    { fg = "#585b70" })
 
-	-- Diff inline
-	hl("ClaudeDiffAdd",        { bg = "#1a3a2a", fg = "#a6e3a1" })
+	-- Diff inline (increased bg contrast, no strikethrough — dim text instead)
+	hl("ClaudeDiffAdd",        { bg = "#1e4a32", fg = "#a6e3a1" })
 	hl("ClaudeDiffChange",     { bg = "#3a3520", fg = "#f9e2af" })
-	hl("ClaudeDiffDelete",     { bg = "#3a1a1a", fg = "#f38ba8", strikethrough = true })
+	hl("ClaudeDiffDelete",     { bg = "#3a1a1a", fg = "#7a5060" })  -- dim muted rose
 	hl("ClaudeDiffDeleteNr",   { fg = "#f38ba8" })
 	hl("ClaudeDiffAddSign",    { fg = "#a6e3a1" })
 	hl("ClaudeDiffChangeSign", { fg = "#f9e2af" })

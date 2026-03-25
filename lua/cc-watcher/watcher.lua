@@ -1,5 +1,5 @@
 -- watcher.lua — Watch for file changes Claude Code makes
--- Uses per-file fs_event watchers (instant, zero-cost when idle).
+-- Per-file fs_event watchers. Handles delete/rename/wipeout cleanup.
 
 local M = {}
 
@@ -13,7 +13,7 @@ local on_change_callbacks = {}
 
 ---@param cb fun(filepath: string, relpath: string)
 function M.on_change(cb)
-	table.insert(on_change_callbacks, cb)
+	on_change_callbacks[#on_change_callbacks + 1] = cb
 end
 
 function M.get_changed_files()
@@ -44,6 +44,15 @@ function M.should_ignore(path)
 		or path:sub(-1) == "~"
 end
 
+local function unwatch_file(filepath)
+	local h = file_watchers[filepath]
+	if h then
+		h:stop()
+		h:close()
+		file_watchers[filepath] = nil
+	end
+end
+
 local function watch_file(filepath)
 	if file_watchers[filepath] or M.should_ignore(filepath) then return end
 
@@ -51,21 +60,32 @@ local function watch_file(filepath)
 	if not handle then return end
 
 	handle:start(filepath, {}, vim.schedule_wrap(function(err, _, events)
-		if err or not events or not events.change then return end
+		if err then
+			unwatch_file(filepath)
+			return
+		end
+		-- File deleted or renamed — clean up watcher
+		if events and events.rename then
+			unwatch_file(filepath)
+			return
+		end
+		if not events or not events.change then return end
 
 		local snap = snapshots.get(filepath)
 		if not snap then return end
 
-		local stat = vim.uv.fs_stat(filepath)
-		if not stat or stat.mtime.sec == snap.mtime then return end
-
+		-- Use fstat on open fd to avoid TOCTOU
 		local fd = vim.uv.fs_open(filepath, "r", 438)
 		if not fd then return end
+		local stat = vim.uv.fs_fstat(fd)
+		if not stat then vim.uv.fs_close(fd); return end
+		if stat.mtime.sec == snap.mtime then vim.uv.fs_close(fd); return end
+
 		local data = vim.uv.fs_read(fd, stat.size, 0)
 		vim.uv.fs_close(fd)
 		if not data then return end
 
-		-- Compare against stored raw string (avoids O(n) table.concat)
+		-- Compare against stored raw (no table.concat needed)
 		if data ~= snap.raw then
 			M.mark_changed(filepath)
 
@@ -84,14 +104,6 @@ local function watch_file(filepath)
 	file_watchers[filepath] = handle
 end
 
-local function unwatch_file(filepath)
-	if file_watchers[filepath] then
-		file_watchers[filepath]:stop()
-		file_watchers[filepath]:close()
-		file_watchers[filepath] = nil
-	end
-end
-
 function M.setup()
 	vim.o.autoread = true
 
@@ -108,7 +120,7 @@ function M.setup()
 		end,
 	})
 
-	-- Only checktime for buffers without an fs_event watcher
+	-- Only checktime for buffers without an active fs_event watcher
 	vim.api.nvim_create_autocmd({ "FocusGained", "BufEnter" }, {
 		group = augroup,
 		callback = function()
@@ -130,11 +142,28 @@ function M.setup()
 		end,
 	})
 
-	vim.api.nvim_create_autocmd("BufDelete", {
+	-- Clean up on buffer delete, unload, wipeout, or rename
+	vim.api.nvim_create_autocmd({ "BufDelete", "BufUnload", "BufWipeout" }, {
 		group = augroup,
 		callback = function(args)
 			local filepath = vim.api.nvim_buf_get_name(args.buf)
 			if filepath ~= "" then unwatch_file(filepath) end
+		end,
+	})
+
+	-- Handle buffer rename (:saveas)
+	vim.api.nvim_create_autocmd("BufFilePost", {
+		group = augroup,
+		callback = function(args)
+			local new_path = vim.api.nvim_buf_get_name(args.buf)
+			-- Old path watcher is now stale — clean up all non-matching watchers
+			-- (we don't have the old name, so just watch the new one)
+			if new_path ~= "" then
+				if not snapshots.has(new_path) then
+					snapshots.take(new_path)
+				end
+				watch_file(new_path)
+			end
 		end,
 	})
 end
