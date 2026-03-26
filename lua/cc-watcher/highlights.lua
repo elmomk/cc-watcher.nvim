@@ -24,8 +24,11 @@ function M.setup()
 	hl("ClaudeSession",  { link = "DiagnosticInfo" })
 	hl("ClaudeDir",      { link = "Directory" })
 	hl("ClaudeFile",        { link = "Normal" })
-	hl("ClaudeFileCurrent", { bold = true, underline = true, link = "Normal" })
-	hl("ClaudeFileLatest",  { italic = true, link = "DiagnosticWarn" })
+	-- Can't use link + bold/italic together, so resolve fg from target groups
+	local normal_fg = vim.api.nvim_get_hl(0, { name = "Normal" }).fg
+	local warn_fg = vim.api.nvim_get_hl(0, { name = "DiagnosticWarn" }).fg
+	hl("ClaudeFileCurrent", { fg = normal_fg, bold = true, underline = true })
+	hl("ClaudeFileLatest",  { fg = warn_fg, italic = true })
 	hl("ClaudeHelp",     { link = "Comment" })
 	hl("ClaudeStats",    { link = "Comment" })
 
