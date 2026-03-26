@@ -49,28 +49,14 @@ function M.changed_files()
 					return ret
 				end,
 				preview = function(ctx)
-					require("cc-watcher.highlights").setup()
 					local item = ctx.item
 					local old_text = util.get_old_text(item.file, item.cwd)
 					local new_text = util.read_file(item.file) or ""
+					local rel = item.rel or item.file
 					local unified = util.compute_unified(old_text, new_text)
 					if unified and unified ~= "" then
-						local lines = vim.split(unified, "\n", { plain = true })
-						local extmarks = {}
-						for i, line in ipairs(lines) do
-							local hl = nil
-							if line:match("^%+") and not line:match("^%+%+%+") then
-								hl = "ClaudeDiffAdd"
-							elseif line:match("^%-") and not line:match("^%-%-%-") then
-								hl = "ClaudeDiffDelete"
-							elseif line:match("^@@") then
-								hl = "ClaudeDiffChange"
-							end
-							if hl then
-								extmarks[#extmarks + 1] = { row = i, col = 0, line_hl_group = hl }
-							end
-						end
-						ctx.item.preview = { text = table.concat(lines, "\n"), extmarks = extmarks, loc = false }
+						local diff_text = "--- a/" .. rel .. "\n+++ b/" .. rel .. "\n" .. unified
+						ctx.item.preview = { text = diff_text, ft = "diff", loc = false }
 					else
 						ctx.item.preview = { text = "No changes", loc = false }
 					end
