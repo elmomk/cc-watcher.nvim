@@ -279,9 +279,17 @@ local function do_render(session_files)
 		lines[5] = "  Waiting for changes..."
 		hls[#hls + 1] = { 4, "ClaudeInactive" }
 	else
-		-- Seed latest_changed_file from displayed files if not yet set
-		if not latest_changed_file and #displayed_files > 0 then
-			latest_changed_file = displayed_files[#displayed_files].abs
+		-- Seed latest_changed_file: find the most recently edited file
+		-- (last JSONL entry that appears in displayed_files)
+		if not latest_changed_file and session_files and #session_files > 0 then
+			local displayed_set = {}
+			for _, f in ipairs(displayed_files) do displayed_set[f.abs] = true end
+			for i = #session_files, 1, -1 do
+				if displayed_set[session_files[i]] then
+					latest_changed_file = session_files[i]
+					break
+				end
+			end
 		end
 
 		-- Flat list: full relative path per line
