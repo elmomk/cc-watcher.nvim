@@ -13,6 +13,16 @@ local defaults = {
 		fzf_lua = false,
 		trouble = false,
 		diffview = false,
+		conform = false,
+		neotest = false,
+		gitsigns = false,
+		neotree = false,
+		edgy = false,
+		fidget = false,
+		overseer = false,
+		flash = false,
+		mini_diff = false,
+		notifier = false,
 	},
 }
 
@@ -66,6 +76,27 @@ function M.setup(opts)
 		})
 	end
 
+	-- Hook-based integrations (opt-in, lazy-loaded)
+	local int = M.config.integrations
+	local int_map = {
+		conform   = "cc-watcher.integrations.conform",
+		neotest   = "cc-watcher.integrations.neotest",
+		gitsigns  = "cc-watcher.integrations.gitsigns",
+		neotree   = "cc-watcher.integrations.neotree",
+		edgy      = "cc-watcher.integrations.edgy",
+		fidget    = "cc-watcher.integrations.fidget",
+		overseer  = "cc-watcher.integrations.overseer",
+		flash     = "cc-watcher.integrations.flash",
+		mini_diff = "cc-watcher.integrations.mini_diff",
+		notifier  = "cc-watcher.integrations.notifier",
+	}
+	for key, mod_name in pairs(int_map) do
+		if int[key] then
+			local iok, imod = pcall(require, mod_name)
+			if iok and imod.setup then imod.setup() end
+		end
+	end
+
 	-- which-key integration (if available)
 	local wk_ok, wk = pcall(require, "which-key")
 	if wk_ok and wk.add then
@@ -89,7 +120,7 @@ end
 M.lazy = {
 	cmd = {
 		"ClaudeSidebar", "ClaudeDiff",
-		"ClaudeSnacks", "ClaudeFzf", "ClaudeTrouble", "ClaudeDiffview",
+		"ClaudeSnacks", "ClaudeFzf", "ClaudeTrouble", "ClaudeDiffview", "ClaudeFlash",
 	},
 	keys = {
 		{ "<leader>cs", function() require("cc-watcher")._ensure_setup(); require("cc-watcher.sidebar").toggle() end, desc = "Claude - toggle sidebar" },

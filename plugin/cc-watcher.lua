@@ -81,6 +81,23 @@ end, {
 	desc = "Trouble: Claude Code changes",
 })
 
+vim.api.nvim_create_user_command("ClaudeFlash", function()
+	ensure()
+	local cfg = require("cc-watcher").config
+	if not cfg.integrations.flash then
+		vim.notify("cc-watcher: flash integration is disabled. Enable it with integrations.flash = true", vim.log.levels.WARN)
+		return
+	end
+	local ok, flash_mod = pcall(require, "cc-watcher.integrations.flash")
+	if not ok then
+		vim.notify("cc-watcher: flash.nvim not found", vim.log.levels.ERROR)
+		return
+	end
+	flash_mod.jump()
+end, {
+	desc = "Flash: jump to Claude hunk",
+})
+
 vim.api.nvim_create_user_command("ClaudeDiffview", function(args)
 	ensure()
 	local cfg = require("cc-watcher").config

@@ -130,9 +130,27 @@ require("cc-watcher").setup({
 
     -- Opt-in integrations (require the corresponding plugin to be installed)
     integrations = {
-        snacks = false,      -- :ClaudeSnacks (for snacks.nvim / LazyVim users)
-        trouble = false,     -- :ClaudeTrouble
-        diffview = false,    -- :ClaudeDiffview
+        -- Pickers & viewers
+        snacks = false,      -- :ClaudeSnacks — fuzzy file/hunk picker (snacks.nvim)
+        fzf_lua = false,     -- :ClaudeFzf — fzf-lua picker
+        trouble = false,     -- :ClaudeTrouble — diagnostic-like list (trouble.nvim)
+        diffview = false,    -- :ClaudeDiffview — side-by-side diff tab
+
+        -- Auto-actions on Claude edits
+        conform = false,     -- auto-format after Claude edits (conform.nvim)
+        neotest = false,     -- auto-run tests when test files change (neotest)
+        overseer = false,    -- fire ClaudeFileChanged event for tasks (overseer.nvim)
+
+        -- UI enhancements
+        gitsigns = false,    -- refresh gitsigns after Claude edits (gitsigns.nvim)
+        neotree = false,     -- mark changed files in neo-tree (neo-tree.nvim)
+        edgy = false,        -- dock sidebar with edgy.nvim
+        fidget = false,      -- show activity spinner (fidget.nvim)
+        notifier = false,    -- rich notifications (snacks.nvim notifier)
+
+        -- Alternative navigation & diff
+        flash = false,       -- :ClaudeFlash — jump to hunks with labels (flash.nvim)
+        mini_diff = false,   -- use mini.diff with Claude baseline (mini.diff)
     },
 })
 ```
@@ -180,8 +198,10 @@ require("cc-watcher").setup({
 | `:ClaudeSidebar` | Toggle the changed files sidebar |
 | `:ClaudeDiff` | Toggle inline diff for current file |
 | `:ClaudeSnacks [changed_files\|hunks]` | Snacks picker for Claude changes |
+| `:ClaudeFzf [changed_files\|hunks]` | fzf-lua picker for Claude changes |
 | `:ClaudeTrouble` | Open trouble.nvim with Claude changes |
 | `:ClaudeDiffview [file]` | Side-by-side diff view |
+| `:ClaudeFlash` | Jump to hunks with flash.nvim labels |
 
 ## Integrations
 
@@ -222,6 +242,92 @@ opts = { integrations = { diffview = true } }
 - Navigate between files with `]f`/`[f`, close with `q`
 
 Uses vim's built-in diff mode — no additional plugin required.
+
+### conform.nvim (auto-format)
+
+```lua
+opts = { integrations = { conform = true } }
+```
+
+Automatically formats files after Claude edits them using [conform.nvim](https://github.com/stevearc/conform.nvim). Runs async and silent.
+
+### neotest (auto-test)
+
+```lua
+opts = { integrations = { neotest = true } }
+```
+
+Automatically runs tests when Claude edits test files (detects `_test.`, `_spec.`, `.test.`, `.spec.`, `test_`, `/tests/`, etc.). Requires [neotest](https://github.com/nvim-neotest/neotest).
+
+### gitsigns.nvim
+
+```lua
+opts = { integrations = { gitsigns = true } }
+```
+
+Refreshes [gitsigns](https://github.com/lewis6991/gitsigns.nvim) after Claude edits files so git diff signs stay accurate.
+
+### neo-tree.nvim
+
+```lua
+opts = { integrations = { neotree = true } }
+```
+
+Refreshes [neo-tree](https://github.com/nvim-neo-tree/neo-tree.nvim) git status when Claude changes files. Also exposes a component for showing Claude indicators in the tree.
+
+### edgy.nvim
+
+```lua
+opts = { integrations = { edgy = true } }
+```
+
+Docks the Claude sidebar with [edgy.nvim](https://github.com/folke/edgy.nvim). Add to your edgy config:
+
+```lua
+left = {
+    require("cc-watcher.integrations.edgy").panel,
+}
+```
+
+### fidget.nvim
+
+```lua
+opts = { integrations = { fidget = true } }
+```
+
+Shows a progress spinner via [fidget.nvim](https://github.com/j-hui/fidget.nvim) when Claude is actively editing files. Auto-clears after 3 seconds of inactivity.
+
+### overseer.nvim
+
+```lua
+opts = { integrations = { overseer = true } }
+```
+
+Fires a `User ClaudeFileChanged` event on every Claude edit, which [overseer.nvim](https://github.com/stevearc/overseer.nvim) templates can listen to. Also provides `require("cc-watcher.integrations.overseer").run_on_change("task_name")`.
+
+### snacks.nvim notifier
+
+```lua
+opts = { integrations = { notifier = true } }
+```
+
+Replaces plain `vim.notify` with rich [snacks.nvim](https://github.com/folke/snacks.nvim) notifications showing changed file details.
+
+### flash.nvim
+
+```lua
+opts = { integrations = { flash = true } }
+```
+
+- `:ClaudeFlash` — jump to any hunk in the current file using [flash.nvim](https://github.com/folke/flash.nvim) labels
+
+### mini.diff
+
+```lua
+opts = { integrations = { mini_diff = true } }
+```
+
+Registers Claude's "before" content as a [mini.diff](https://github.com/echasnovski/mini.diff) reference source. Auto-attaches to buffers Claude has changed.
 
 ## LazyVim Dashboard Setup
 
@@ -312,9 +418,19 @@ Returns `""` when no changes, or `"󰚩 N"` where N is the count of changed file
 - [Claude Code](https://claude.ai/claude-code) running in the same directory
 
 **Optional (for integrations):**
-- [snacks.nvim](https://github.com/folke/snacks.nvim) (included in LazyVim)
-- [trouble.nvim](https://github.com/folke/trouble.nvim) v3
-- [nvim-web-devicons](https://github.com/nvim-tree/nvim-web-devicons) (file icons in sidebar/pickers)
+- [snacks.nvim](https://github.com/folke/snacks.nvim) — picker + notifier (included in LazyVim)
+- [fzf-lua](https://github.com/ibhagwan/fzf-lua) — fzf picker
+- [trouble.nvim](https://github.com/folke/trouble.nvim) v3 — diagnostic list
+- [conform.nvim](https://github.com/stevearc/conform.nvim) — auto-format
+- [neotest](https://github.com/nvim-neotest/neotest) — auto-test
+- [gitsigns.nvim](https://github.com/lewis6991/gitsigns.nvim) — git sign refresh
+- [neo-tree.nvim](https://github.com/nvim-neo-tree/neo-tree.nvim) — file explorer markers
+- [edgy.nvim](https://github.com/folke/edgy.nvim) — sidebar docking
+- [fidget.nvim](https://github.com/j-hui/fidget.nvim) — activity spinner
+- [overseer.nvim](https://github.com/stevearc/overseer.nvim) — task runner
+- [flash.nvim](https://github.com/folke/flash.nvim) — hunk jump labels
+- [mini.diff](https://github.com/echasnovski/mini.diff) — alternative diff
+- [nvim-web-devicons](https://github.com/nvim-tree/nvim-web-devicons) — file icons in sidebar/pickers
 
 ## Documentation
 

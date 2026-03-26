@@ -303,6 +303,7 @@ local function show_help()
 		"│    :ClaudeFzf [hunks]          │",
 		"│    :ClaudeTrouble              │",
 		"│    :ClaudeDiffview [file]      │",
+		"│    :ClaudeFlash                │",
 		"│                                │",
 		"│  ● live change  ○ from session │",
 		"╰────────────────────────────────╯",
