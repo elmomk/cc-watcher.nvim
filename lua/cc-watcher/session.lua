@@ -9,6 +9,7 @@ local sessions_dir = vim.fn.expand("~/.claude/sessions")
 local projects_dir = vim.fn.expand("~/.claude/projects")
 
 local jsonl_dir_cache = { cwd = nil, path = nil, checked_at = 0 }
+local active_session_cache = { cwd = nil, result = nil, checked_at = 0 }
 
 -- Incremental parse state
 local tail = {
@@ -27,6 +28,9 @@ function M._reset()
 	jsonl_dir_cache.cwd = nil
 	jsonl_dir_cache.path = nil
 	jsonl_dir_cache.checked_at = 0
+	active_session_cache.cwd = nil
+	active_session_cache.result = nil
+	active_session_cache.checked_at = 0
 end
 
 -- JSONL file watcher
@@ -56,9 +60,12 @@ local function parse_chunk(data, seen, files)
 							and (block.name == "Write" or block.name == "Edit")
 							and block.input and block.input.file_path then
 							local fp = block.input.file_path
-							if not seen[fp] then
-								seen[fp] = true
-								files[#files + 1] = fp
+							-- Reject paths with traversal or outside project
+							if fp and not fp:find("%.%./") and fp:sub(1, 1) == "/" then
+								if not seen[fp] then
+									seen[fp] = true
+									files[#files + 1] = fp
+								end
 							end
 						end
 					end
@@ -71,8 +78,18 @@ end
 ---@param cwd string
 ---@return { pid: number, sessionId: string, cwd: string }|nil
 function M.find_active_session(cwd)
+	local now = vim.uv.now() / 1000
+	if active_session_cache.cwd == cwd and (now - active_session_cache.checked_at) < 5 then
+		return active_session_cache.result
+	end
+
 	local handle = vim.uv.fs_scandir(sessions_dir)
-	if not handle then return nil end
+	if not handle then
+		active_session_cache.cwd = cwd
+		active_session_cache.result = nil
+		active_session_cache.checked_at = now
+		return nil
+	end
 
 	local best = nil
 	while true do
@@ -83,7 +100,7 @@ function M.find_active_session(cwd)
 			local fd = vim.uv.fs_open(path, "r", 438)
 			if fd then
 				local stat = vim.uv.fs_fstat(fd)
-				if stat then
+				if stat and stat.size < 1048576 then
 					local data = vim.uv.fs_read(fd, stat.size, 0)
 					vim.uv.fs_close(fd)
 					if data then
@@ -103,6 +120,10 @@ function M.find_active_session(cwd)
 			end
 		end
 	end
+
+	active_session_cache.cwd = cwd
+	active_session_cache.result = best
+	active_session_cache.checked_at = now
 	return best
 end
 
@@ -138,7 +159,7 @@ function M.find_latest_jsonl(cwd)
 								vim.uv.fs_close(fd)
 								if chunk then
 									local line = chunk:match("^[^\n]+")
-									if line and line:find(cwd, 1, true) then
+									if line and line:find('"' .. cwd .. '"', 1, true) then
 										best_path = fpath
 										best_mtime = stat.mtime.sec
 									end

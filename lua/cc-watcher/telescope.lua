@@ -1,7 +1,12 @@
 -- telescope.lua — Telescope pickers for cc-watcher.nvim
 
 local ok = pcall(require, "telescope")
-if not ok then return {} end
+if not ok then
+	return {
+		changed_files = function() vim.notify("telescope.nvim is required for this feature", vim.log.levels.ERROR) end,
+		hunks = function() vim.notify("telescope.nvim is required for this feature", vim.log.levels.ERROR) end,
+	}
+end
 
 local pickers = require("telescope.pickers")
 local finders = require("telescope.finders")
@@ -10,97 +15,14 @@ local conf = require("telescope.config").values
 local actions = require("telescope.actions")
 local action_state = require("telescope.actions.state")
 
+local util = require("cc-watcher.util")
+
 local M = {}
 
-local has_devicons, devicons = pcall(require, "nvim-web-devicons")
-
-local function relpath(filepath, cwd)
-	if filepath:sub(1, #cwd) == cwd then return filepath:sub(#cwd + 2) end
-	return filepath
-end
-
-local function read_file(filepath)
-	local fd = vim.uv.fs_open(filepath, "r", 438)
-	if not fd then return "" end
-	local stat = vim.uv.fs_fstat(fd)
-	if not stat then vim.uv.fs_close(fd); return "" end
-	local data = vim.uv.fs_read(fd, stat.size, 0) or ""
-	vim.uv.fs_close(fd)
-	return data
-end
-
-local function get_old_text(filepath, cwd)
-	local snapshots = require("cc-watcher.snapshots")
-	local snap = snapshots.get(filepath)
-	local old_text = snap and snap.raw or ""
-	if old_text == "" then
-		local rel = relpath(filepath, cwd)
-		local lines = vim.fn.systemlist("git show HEAD:" .. vim.fn.shellescape(rel) .. " 2>/dev/null")
-		if vim.v.shell_error == 0 then old_text = table.concat(lines, "\n") .. "\n" end
-	end
-	return old_text
-end
-
-local function compute_unified(filepath, cwd)
-	local old_text = get_old_text(filepath, cwd)
-	local new_text = read_file(filepath)
-	if old_text == "" and new_text == "" then return nil end
-	return vim.diff(old_text, new_text, { result_type = "unified", ctxlen = 3 })
-end
-
-local function compute_hunks(filepath, cwd)
-	local old_text = get_old_text(filepath, cwd)
-	local new_text = read_file(filepath)
-	if old_text == "" and new_text == "" then return {} end
-	return vim.diff(old_text, new_text, { result_type = "indices", algorithm = "histogram" }) or {}
-end
-
-local function file_stats_from_hunks(hunks)
-	local add, del = 0, 0
-	for _, h in ipairs(hunks) do
-		add = add + h[4]
-		del = del + h[2]
-	end
-	return add, del
-end
-
-local function collect_files(callback)
-	local watcher = require("cc-watcher.watcher")
-	local session = require("cc-watcher.session")
-	local cwd = vim.fn.getcwd()
-	local live = watcher.get_changed_files()
-	local merged = {}
-	local sources = {}
-
-	for fp in pairs(live) do
-		merged[fp] = true
-		sources[fp] = "live"
-	end
-
-	session.get_claude_edited_files_async(function(session_files)
-		for _, fp in ipairs(session_files) do
-			if not merged[fp] then
-				merged[fp] = true
-				sources[fp] = "session"
-			end
-		end
-
-		local results = {}
-		for fp in pairs(merged) do
-			results[#results + 1] = { filepath = fp, source = sources[fp] }
-		end
-
-		table.sort(results, function(a, b)
-			return relpath(a.filepath, cwd) < relpath(b.filepath, cwd)
-		end)
-
-		callback(results, cwd)
-	end, cwd)
-end
-
 local function make_display(entry)
-	local indicator = entry.source == "live" and "● " or "○ "
+	local indicator = entry.source == "live" and "\xe2\x97\x8f " or "\xe2\x97\x8b "
 	local icon = ""
+	local has_devicons, devicons = pcall(require, "nvim-web-devicons")
 	if has_devicons then
 		local ic, hl = devicons.get_icon(entry.filename, nil, { default = true })
 		if ic then icon = ic .. " " end
@@ -115,21 +37,25 @@ end
 function M.changed_files(opts)
 	opts = opts or {}
 
-	collect_files(function(files, cwd)
+	util.collect_files(function(files, cwd)
 		vim.schedule(function()
 			local entries = {}
 			for _, f in ipairs(files) do
-				local rel = relpath(f.filepath, cwd)
-				local hunks = compute_hunks(f.filepath, cwd)
-				local add, del = file_stats_from_hunks(hunks)
+				local old_text = util.get_old_text(f.abs, cwd)
+				local new_text = util.read_file(f.abs) or ""
+				local hunks = util.compute_hunks(old_text, new_text)
+				local add, del = 0, 0
+				if hunks then
+					add, del = util.hunk_stats(hunks)
+				end
 				entries[#entries + 1] = {
-					value = f.filepath,
-					ordinal = rel,
+					value = f.abs,
+					ordinal = f.rel,
 					display = make_display,
-					rel = rel,
-					filepath = f.filepath,
-					filename = vim.fn.fnamemodify(f.filepath, ":t"),
-					source = f.source,
+					rel = f.rel,
+					filepath = f.abs,
+					filename = vim.fn.fnamemodify(f.abs, ":t"),
+					source = f.live and "live" or "session",
 					additions = add,
 					deletions = del,
 				}
@@ -145,7 +71,9 @@ function M.changed_files(opts)
 				previewer = previewers.new_buffer_previewer({
 					title = "Diff",
 					define_preview = function(self, entry)
-						local unified = compute_unified(entry.filepath, cwd)
+						local old_text = util.get_old_text(entry.filepath, cwd)
+						local new_text = util.read_file(entry.filepath) or ""
+						local unified = util.compute_unified(old_text, new_text)
 						if not unified or unified == "" then
 							vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, { "No changes" })
 							return
@@ -183,24 +111,27 @@ end
 function M.hunks(opts)
 	opts = opts or {}
 
-	collect_files(function(files, cwd)
+	util.collect_files(function(files, cwd)
 		vim.schedule(function()
 			local entries = {}
 			for _, f in ipairs(files) do
-				local rel = relpath(f.filepath, cwd)
-				local file_hunks = compute_hunks(f.filepath, cwd)
-				for _, h in ipairs(file_hunks) do
-					local new_start, new_count, old_count = h[3], h[4], h[2]
-					local desc = "+" .. new_count .. "/-" .. old_count .. " lines"
-					local line = math.max(1, new_start)
-					entries[#entries + 1] = {
-						value = f.filepath .. ":" .. line,
-						ordinal = rel .. ":" .. line .. " " .. desc,
-						display = rel .. ":" .. line .. " — " .. desc,
-						filepath = f.filepath,
-						filename = vim.fn.fnamemodify(f.filepath, ":t"),
-						lnum = line,
-					}
+				local old_text = util.get_old_text(f.abs, cwd)
+				local new_text = util.read_file(f.abs) or ""
+				local file_hunks = util.compute_hunks(old_text, new_text)
+				if file_hunks then
+					for _, h in ipairs(file_hunks) do
+						local new_start, new_count, old_count = h[3], h[4], h[2]
+						local desc = "+" .. new_count .. "/-" .. old_count .. " lines"
+						local line = math.max(1, new_start)
+						entries[#entries + 1] = {
+							value = f.abs .. ":" .. line,
+							ordinal = f.rel .. ":" .. line .. " " .. desc,
+							display = f.rel .. ":" .. line .. " \xe2\x80\x94 " .. desc,
+							filepath = f.abs,
+							filename = vim.fn.fnamemodify(f.abs, ":t"),
+							lnum = line,
+						}
+					end
 				end
 			end
 

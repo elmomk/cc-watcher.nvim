@@ -5,6 +5,7 @@ local M = {}
 
 local snapshots = require("cc-watcher.snapshots")
 local highlights = require("cc-watcher.highlights")
+local util = require("cc-watcher.util")
 
 local ns = vim.api.nvim_create_namespace("claude_diff")
 local sign_ns = vim.api.nvim_create_namespace("claude_diff_signs")
@@ -15,21 +16,22 @@ local active_diffs = {}
 
 local augroup = vim.api.nvim_create_augroup("ClaudeDiffCleanup", { clear = true })
 
-vim.api.nvim_create_autocmd("BufWipeout", {
-	group = augroup,
-	callback = function(args) active_diffs[args.buf] = nil end,
-})
+local _setup_done = false
 
-local function relpath(filepath)
-	local cwd = vim.fn.getcwd()
-	if filepath:sub(1, #cwd) == cwd then return filepath:sub(#cwd + 2) end
-	return filepath
+function M.setup()
+	if _setup_done then return end
+	_setup_done = true
+
+	vim.api.nvim_create_autocmd("BufWipeout", {
+		group = augroup,
+		callback = function(args) active_diffs[args.buf] = nil end,
+	})
 end
 
 local function get_before_lines(filepath)
 	local snap = snapshots.get(filepath)
 	if snap then return snap.lines end
-	local rel = relpath(filepath)
+	local rel = util.relpath(filepath)
 	local lines = vim.fn.systemlist("git show HEAD:" .. vim.fn.shellescape(rel) .. " 2>/dev/null")
 	if vim.v.shell_error == 0 and #lines > 0 then return lines end
 	return nil

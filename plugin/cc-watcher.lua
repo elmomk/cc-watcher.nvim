@@ -91,7 +91,7 @@ vim.api.nvim_create_user_command("ClaudeDiffview", function(args)
 	end
 	local ok, dv = pcall(require, "cc-watcher.diffview")
 	if not ok then
-		vim.notify("cc-watcher: diffview.nvim not found", vim.log.levels.ERROR)
+		vim.notify("cc-watcher: diffview module failed to load", vim.log.levels.ERROR)
 		return
 	end
 	local filepath = args.fargs[1]

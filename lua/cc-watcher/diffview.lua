@@ -4,47 +4,26 @@
 
 local M = {}
 
-local watcher = require("cc-watcher.watcher")
-local session = require("cc-watcher.session")
-local snapshots = require("cc-watcher.snapshots")
+local relpath = require("cc-watcher.util").relpath
 
 -- Track state for the diff tab so we can close it cleanly
 local state = {
 	tabpage = nil,
 	bufs = {},  -- scratch buffers we created
-	wins = {},  -- windows we created
 }
 
-local function relpath(filepath)
-	local cwd = vim.fn.getcwd()
-	if filepath:sub(1, #cwd) == cwd then return filepath:sub(#cwd + 2) end
-	return filepath
-end
-
---- Collect all files Claude has changed (watcher + session)
+--- Collect all files Claude has changed (watcher + session), filtered to those with snapshots
 ---@param callback fun(files: { abs: string, rel: string }[])
 local function collect_changed_files(callback)
-	local files = {}
-	local seen = {}
-
-	for filepath in pairs(watcher.get_changed_files()) do
-		seen[filepath] = true
-		files[#files + 1] = { abs = filepath, rel = relpath(filepath) }
-	end
-
-	session.get_claude_edited_files_async(function(session_files)
-		for _, filepath in ipairs(session_files) do
-			if not seen[filepath] then
-				-- Only include files that have a snapshot (otherwise no diff)
-				if snapshots.has(filepath) then
-					seen[filepath] = true
-					files[#files + 1] = { abs = filepath, rel = relpath(filepath) }
-				end
+	local snapshots = require("cc-watcher.snapshots")
+	require("cc-watcher.util").collect_files(function(files, cwd)
+		local filtered = {}
+		for _, f in ipairs(files) do
+			if f.live or snapshots.has(f.abs) then
+				filtered[#filtered + 1] = f
 			end
 		end
-
-		table.sort(files, function(a, b) return a.rel < b.rel end)
-		callback(files)
+		callback(filtered)
 	end)
 end
 
@@ -52,6 +31,7 @@ end
 ---@param filepath string absolute path
 ---@return number|nil bufnr
 local function create_snapshot_buf(filepath)
+	local snapshots = require("cc-watcher.snapshots")
 	local snap = snapshots.get(filepath)
 	if not snap then return nil end
 
@@ -79,7 +59,7 @@ end
 function M.open_file(filepath)
 	filepath = vim.fn.fnamemodify(filepath, ":p")
 
-	local snap = snapshots.get(filepath)
+	local snap = require("cc-watcher.snapshots").get(filepath)
 	if not snap then
 		vim.notify("No snapshot for " .. relpath(filepath), vim.log.levels.WARN)
 		return
@@ -108,7 +88,6 @@ function M.open_file(filepath)
 	-- Store state for cleanup
 	state.tabpage = tab
 	state.bufs = { snap_buf }
-	state.wins = {}
 
 	-- Set up q to close the diff tab
 	local function close_tab()
@@ -145,7 +124,6 @@ function M.open()
 			local tab = vim.api.nvim_get_current_tabpage()
 			state.tabpage = tab
 			state.bufs = {}
-			state.wins = {}
 
 			-- Start with the first file
 			local idx = 1
@@ -292,7 +270,6 @@ function M.close()
 
 	state.tabpage = nil
 	state.bufs = {}
-	state.wins = {}
 end
 
 return M

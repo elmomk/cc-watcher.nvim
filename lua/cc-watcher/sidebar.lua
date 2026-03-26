@@ -7,12 +7,14 @@ local watcher = require("cc-watcher.watcher")
 local session = require("cc-watcher.session")
 local highlights = require("cc-watcher.highlights")
 local diff = require("cc-watcher.diff")
+local util = require("cc-watcher.util")
 
 local sidebar_buf = nil
 local sidebar_win = nil
 local HEADER_LINES = 3 -- title, status, separator
 
 local displayed_files = {}
+local line_to_file = {} -- line number -> file entry, rebuilt each render
 local ns = vim.api.nvim_create_namespace("claude_sidebar")
 
 -- Reusable timers (avoids handle leaks)
@@ -21,8 +23,7 @@ local jsonl_debounce = vim.uv.new_timer()
 local pending_changes = {}
 
 local function get_width()
-	local ok, cfg = pcall(require, "cc-watcher")
-	return ok and cfg.config and cfg.config.sidebar_width or 36
+	return require("cc-watcher").config.sidebar_width or 36
 end
 
 local function is_open()
@@ -30,11 +31,7 @@ local function is_open()
 		and sidebar_buf and vim.api.nvim_buf_is_valid(sidebar_buf)
 end
 
-local function relpath(filepath)
-	local cwd = vim.fn.getcwd()
-	if filepath:sub(1, #cwd) == cwd then return filepath:sub(#cwd + 2) end
-	return filepath
-end
+local relpath = util.relpath
 
 --- Try to get a devicon for a filename
 local function get_icon(name)
@@ -70,18 +67,19 @@ local function split_path(rel)
 	return dir or "", name or rel
 end
 
---- Compute +N/-M stats for a file (only if buffer is loaded, else skip)
-local function file_stats_string(filepath)
+--- Compute +N/-M stats for a file (only if buffer is loaded, else 0,0)
+---@return number add, number del, string stats_str
+local function file_stats(filepath)
 	for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
 		if vim.api.nvim_buf_is_loaded(bufnr) and vim.api.nvim_buf_get_name(bufnr) == filepath then
 			local add, del = diff.file_stats(filepath, bufnr)
 			if add > 0 or del > 0 then
-				return "+" .. add .. " -" .. del
+				return add, del, "+" .. add .. " -" .. del
 			end
-			return ""
+			return 0, 0, ""
 		end
 	end
-	return ""
+	return 0, 0, ""
 end
 
 local function do_render(session_files)
@@ -89,6 +87,7 @@ local function do_render(session_files)
 
 	local WIDTH = get_width()
 	displayed_files = collect_files(session_files)
+	line_to_file = {}
 
 	local lines = {}
 	local hls = {}
@@ -148,17 +147,20 @@ local function do_render(session_files)
 				-- Build the line: "  ● 󰈙 filename.rs       +3 -1"
 				local indent = dir ~= "" and "    " or "  "
 				local prefix = indent .. indicator .. " " .. icon .. " "
-				local stats = file_stats_string(file.abs)
+				local add, del, stats = file_stats(file.abs)
+				total_add = total_add + add
+				total_del = total_del + del
 
 				local line = prefix .. name
 				if stats ~= "" then
-					local padding = WIDTH - #line - #stats - 1
+					local padding = WIDTH - vim.api.nvim_strwidth(line) - vim.api.nvim_strwidth(stats) - 1
 					if padding > 0 then
 						line = line .. string.rep(" ", padding) .. stats
 					end
 				end
 
 				table.insert(lines, line)
+				line_to_file[#lines] = file
 
 				local cur_ln = #lines - 1
 				-- Indicator highlight
@@ -173,16 +175,6 @@ local function do_render(session_files)
 				-- Stats
 				if stats ~= "" then
 					hls[#hls + 1] = { cur_ln, "ClaudeStats", #line - #stats, -1 }
-				end
-
-				-- Accumulate totals
-				for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-					if vim.api.nvim_buf_is_loaded(bufnr) and vim.api.nvim_buf_get_name(bufnr) == file.abs then
-						local a, d = diff.file_stats(file.abs, bufnr)
-						total_add = total_add + a
-						total_del = total_del + d
-						break
-					end
 				end
 			end
 		end
@@ -231,22 +223,7 @@ end
 local function file_at_cursor()
 	if not is_open() then return nil end
 	local row = vim.api.nvim_win_get_cursor(sidebar_win)[1]
-	-- Walk displayed_files to find which one this row maps to
-	-- Account for directory headers
-	local line = vim.api.nvim_buf_get_lines(sidebar_buf, row - 1, row, false)[1]
-	if not line then return nil end
-
-	-- File lines start with spaces + ● or ○
-	if not line:match("^%s+[●○]") then return nil end
-
-	-- Find by matching against displayed_files
-	for _, f in ipairs(displayed_files) do
-		local _, name = split_path(f.rel)
-		if line:find(name, 1, true) then
-			return f
-		end
-	end
-	return nil
+	return line_to_file[row]
 end
 
 local function show_help()
@@ -330,19 +307,26 @@ function M.open()
 
 	local function open_with_diff()
 		local f = file_at_cursor()
-		if f then
-			vim.cmd("wincmd p")
-			vim.cmd("edit " .. vim.fn.fnameescape(f.abs))
-			require("cc-watcher.diff").show(f.abs)
+		if not f then
+			vim.notify("No file on this line", vim.log.levels.INFO)
+			return
 		end
+		if vim.fn.winnr("$") <= 1 then
+			vim.cmd("wincmd v")
+		end
+		vim.cmd("wincmd p")
+		vim.cmd("edit " .. vim.fn.fnameescape(f.abs))
+		require("cc-watcher.diff").show(f.abs)
 	end
 
 	local function open_plain()
 		local f = file_at_cursor()
-		if f then
-			vim.cmd("wincmd p")
-			vim.cmd("edit " .. vim.fn.fnameescape(f.abs))
+		if not f then return end
+		if vim.fn.winnr("$") <= 1 then
+			vim.cmd("wincmd v")
 		end
+		vim.cmd("wincmd p")
+		vim.cmd("edit " .. vim.fn.fnameescape(f.abs))
 	end
 
 	vim.keymap.set("n", "<CR>", open_with_diff, opts)

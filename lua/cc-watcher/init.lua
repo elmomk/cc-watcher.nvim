@@ -42,9 +42,11 @@ function M.setup(opts)
 	local watcher = require("cc-watcher.watcher")
 	local sidebar = require("cc-watcher.sidebar")
 	local session = require("cc-watcher.session")
+	local diff = require("cc-watcher.diff")
 
 	watcher.setup()
 	sidebar.setup()
+	diff.setup()
 	session.watch_jsonl()
 
 	-- Keymaps

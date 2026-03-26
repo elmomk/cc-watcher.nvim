@@ -3,38 +3,7 @@
 
 local M = {}
 
-local snapshots = require("cc-watcher.snapshots")
-local watcher = require("cc-watcher.watcher")
-
-local function relpath(filepath)
-	local cwd = vim.fn.getcwd()
-	if filepath:sub(1, #cwd) == cwd then return filepath:sub(#cwd + 2) end
-	return filepath
-end
-
-local function get_old_text(filepath)
-	local snap = snapshots.get(filepath)
-	if snap and snap.raw ~= "" then return snap.raw end
-	local rel = relpath(filepath)
-	local lines = vim.fn.systemlist("git show HEAD:" .. vim.fn.shellescape(rel) .. " 2>/dev/null")
-	if vim.v.shell_error == 0 and #lines > 0 then
-		return table.concat(lines, "\n") .. "\n"
-	end
-	return ""
-end
-
-local function read_file(filepath)
-	local fd = vim.uv.fs_open(filepath, "r", 438)
-	if not fd then return nil end
-	local stat = vim.uv.fs_fstat(fd)
-	if not stat then
-		vim.uv.fs_close(fd)
-		return nil
-	end
-	local data = vim.uv.fs_read(fd, stat.size, 0) or ""
-	vim.uv.fs_close(fd)
-	return data
-end
+local util = require("cc-watcher.util")
 
 local function hunk_description(old_count, new_count)
 	if old_count == 0 then
@@ -55,26 +24,16 @@ end
 --- Build the list of trouble items from all changed files.
 ---@return table[] items
 function M.items()
+	local watcher = require("cc-watcher.watcher")
 	local changed = watcher.get_changed_files()
 	local items = {}
 
 	for filepath, _ in pairs(changed) do
-		local old_text = get_old_text(filepath)
-		local new_text = read_file(filepath)
+		local old_text = util.get_old_text(filepath)
+		local new_text = util.read_file(filepath)
 
 		if new_text then
-			-- Normalize trailing newlines
-			if old_text ~= "" and old_text:sub(-1) ~= "\n" then
-				old_text = old_text .. "\n"
-			end
-			if new_text:sub(-1) ~= "\n" then
-				new_text = new_text .. "\n"
-			end
-
-			local hunks = vim.diff(old_text, new_text, {
-				result_type = "indices",
-				algorithm = "histogram",
-			})
+			local hunks = util.compute_hunks(old_text, new_text)
 
 			if hunks then
 				for _, h in ipairs(hunks) do
@@ -121,8 +80,13 @@ function M.get(cb)
 	cb(M.items())
 end
 
+local _setup_done = false
+
 --- Attempt to register the "claude" source with trouble.nvim v3.
 function M.setup()
+	if _setup_done then return end
+	_setup_done = true
+
 	local ok, trouble = pcall(require, "trouble")
 	if not ok then return end
 

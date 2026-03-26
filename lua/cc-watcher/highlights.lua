@@ -1,5 +1,5 @@
--- highlights.lua — All highlight groups, defined once with default = true
--- Users can override any group in their colorscheme.
+-- highlights.lua — All highlight groups, linked to semantic defaults.
+-- Adapts to any colorscheme (dark or light). Users can override any group.
 
 local M = {}
 
@@ -14,27 +14,27 @@ function M.setup()
 		vim.api.nvim_set_hl(0, name, opts)
 	end
 
-	-- Sidebar
-	hl("ClaudeHeader",   { fg = "#cba6f7", bold = true })
-	hl("ClaudeActive",   { fg = "#a6e3a1" })
-	hl("ClaudeInactive", { fg = "#6c7086", italic = true })
-	hl("ClaudeCount",    { fg = "#89b4fa" })
-	hl("ClaudeSep",      { fg = "#313244" })
-	hl("ClaudeLive",     { fg = "#f9e2af" })
-	hl("ClaudeSession",  { fg = "#89b4fa" })
-	hl("ClaudeDir",      { fg = "#6c7086" })
-	hl("ClaudeFile",     { fg = "#cdd6f4" })
-	hl("ClaudeHelp",     { fg = "#585b70" })
-	hl("ClaudeStats",    { fg = "#585b70" })
+	-- Sidebar: link to semantic groups that adapt to any colorscheme
+	hl("ClaudeHeader",   { link = "Title" })
+	hl("ClaudeActive",   { link = "DiagnosticOk" })
+	hl("ClaudeInactive", { link = "Comment" })
+	hl("ClaudeCount",    { link = "Number" })
+	hl("ClaudeSep",      { link = "WinSeparator" })
+	hl("ClaudeLive",     { link = "DiagnosticWarn" })
+	hl("ClaudeSession",  { link = "DiagnosticInfo" })
+	hl("ClaudeDir",      { link = "Directory" })
+	hl("ClaudeFile",     { link = "Normal" })
+	hl("ClaudeHelp",     { link = "Comment" })
+	hl("ClaudeStats",    { link = "Comment" })
 
-	-- Diff inline (increased bg contrast, no strikethrough — dim text instead)
-	hl("ClaudeDiffAdd",        { bg = "#1e4a32", fg = "#a6e3a1" })
-	hl("ClaudeDiffChange",     { bg = "#3a3520", fg = "#f9e2af" })
-	hl("ClaudeDiffDelete",     { bg = "#3a1a1a", fg = "#7a5060" })  -- dim muted rose
-	hl("ClaudeDiffDeleteNr",   { fg = "#f38ba8" })
-	hl("ClaudeDiffAddSign",    { fg = "#a6e3a1" })
-	hl("ClaudeDiffChangeSign", { fg = "#f9e2af" })
-	hl("ClaudeDiffDeleteSign", { fg = "#f38ba8" })
+	-- Diff inline: link to built-in diff groups
+	hl("ClaudeDiffAdd",        { link = "DiffAdd" })
+	hl("ClaudeDiffChange",     { link = "DiffChange" })
+	hl("ClaudeDiffDelete",     { link = "DiffDelete" })
+	hl("ClaudeDiffDeleteNr",   { link = "DiagnosticError" })
+	hl("ClaudeDiffAddSign",    { link = "Added" })
+	hl("ClaudeDiffChangeSign", { link = "Changed" })
+	hl("ClaudeDiffDeleteSign", { link = "Removed" })
 end
 
 return M

@@ -1,6 +1,12 @@
 local T = MiniTest.new_set()
 
-T["watcher"] = MiniTest.new_set()
+T["watcher"] = MiniTest.new_set({
+	hooks = {
+		pre_case = function()
+			require("cc-watcher.watcher")._reset()
+		end,
+	},
+})
 
 T["watcher"]["should_ignore() filters git directories"] = function()
 	local watcher = require("cc-watcher.watcher")

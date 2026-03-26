@@ -168,4 +168,10 @@ function M.setup()
 	})
 end
 
+function M._reset()
+	changed_files = {}
+	on_change_callbacks = {}
+	-- Don't reset file_watchers — those are libuv handles
+end
+
 return M

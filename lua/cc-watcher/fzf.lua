@@ -3,6 +3,10 @@
 
 local M = {}
 
+local util = require("cc-watcher.util")
+
+local preview_cache = {} -- filepath -> { tmp = tmppath, mtime = number }
+
 local function guard()
 	local ok, fzf = pcall(require, "fzf-lua")
 	if not ok then
@@ -10,100 +14,6 @@ local function guard()
 		return nil
 	end
 	return fzf
-end
-
-local function relpath(filepath)
-	local cwd = vim.fn.getcwd()
-	if filepath:sub(1, #cwd) == cwd then return filepath:sub(#cwd + 2) end
-	return filepath
-end
-
-local function read_file(filepath)
-	local fd = vim.uv.fs_open(filepath, "r", 438)
-	if not fd then return "" end
-	local stat = vim.uv.fs_fstat(fd)
-	if not stat or stat.size == 0 then
-		vim.uv.fs_close(fd)
-		return ""
-	end
-	local data = vim.uv.fs_read(fd, stat.size, 0) or ""
-	vim.uv.fs_close(fd)
-	return data
-end
-
-local function get_old_text(filepath)
-	local snapshots = require("cc-watcher.snapshots")
-	local snap = snapshots.get(filepath)
-	local old_text = snap and snap.raw or ""
-	if old_text == "" then
-		local rel = relpath(filepath)
-		local lines = vim.fn.systemlist("git show HEAD:" .. vim.fn.shellescape(rel) .. " 2>/dev/null")
-		if vim.v.shell_error == 0 then
-			old_text = table.concat(lines, "\n") .. "\n"
-		end
-	end
-	return old_text
-end
-
-local function compute_unified(filepath)
-	local old_text = get_old_text(filepath)
-	local new_text = read_file(filepath)
-	if old_text == "" and new_text == "" then return nil end
-	return vim.diff(old_text, new_text, { result_type = "unified", ctxlen = 3 })
-end
-
-local function compute_hunks(filepath)
-	local old_text = get_old_text(filepath)
-	local new_text = read_file(filepath)
-	if old_text == "" and new_text == "" then return nil end
-	return vim.diff(old_text, new_text, { result_type = "indices", algorithm = "histogram" })
-end
-
-local function file_stats(filepath)
-	local hunks = compute_hunks(filepath)
-	if not hunks then return 0, 0 end
-	local add, del = 0, 0
-	for _, h in ipairs(hunks) do
-		add = add + h[4]
-		del = del + h[2]
-	end
-	return add, del
-end
-
-local function collect_files(callback)
-	local watcher = require("cc-watcher.watcher")
-	local session = require("cc-watcher.session")
-
-	local files = {}
-	local seen = {}
-
-	for filepath in pairs(watcher.get_changed_files()) do
-		seen[filepath] = true
-		files[#files + 1] = { abs = filepath, rel = relpath(filepath), live = true }
-	end
-
-	session.get_claude_edited_files_async(function(session_files)
-		for _, filepath in ipairs(session_files or {}) do
-			if not seen[filepath] then
-				seen[filepath] = true
-				files[#files + 1] = { abs = filepath, rel = relpath(filepath), live = false }
-			end
-		end
-		table.sort(files, function(a, b) return a.rel < b.rel end)
-		callback(files)
-	end)
-end
-
---- Write unified diff to a tmp file and return the path
-local function diff_preview_tmpfile(filepath)
-	local unified = compute_unified(filepath)
-	if not unified or unified == "" then return nil end
-	local tmp = vim.fn.tempname() .. ".diff"
-	local fd = vim.uv.fs_open(tmp, "w", 438)
-	if not fd then return nil end
-	vim.uv.fs_write(fd, unified, 0)
-	vim.uv.fs_close(fd)
-	return tmp
 end
 
 --- Parse an fzf entry to extract the absolute filepath
@@ -128,11 +38,46 @@ local function parse_hunk_entry(entry)
 	return rel, tonumber(line)
 end
 
+--- Write unified diff to a tmp file and return the path (cached per filepath)
+local function diff_preview_tmpfile(filepath)
+	local stat = vim.uv.fs_stat(filepath)
+	local mtime = stat and stat.mtime.sec or 0
+
+	local cached = preview_cache[filepath]
+	if cached and cached.mtime == mtime then
+		return cached.tmp
+	end
+
+	local old_text = util.get_old_text(filepath)
+	local new_text = util.read_file(filepath) or ""
+	local unified = util.compute_unified(old_text, new_text)
+	if not unified or unified == "" then return nil end
+
+	local tmp = cached and cached.tmp or (vim.fn.tempname() .. ".diff")
+	local fd = vim.uv.fs_open(tmp, "w", util.FILE_MODE)
+	if not fd then return nil end
+	vim.uv.fs_write(fd, unified, 0)
+	vim.uv.fs_close(fd)
+
+	preview_cache[filepath] = { tmp = tmp, mtime = mtime }
+	return tmp
+end
+
+-- Cleanup cached tmp files on exit
+vim.api.nvim_create_autocmd("VimLeavePre", {
+	callback = function()
+		for _, entry in pairs(preview_cache) do
+			pcall(vim.uv.fs_unlink, entry.tmp)
+		end
+		preview_cache = {}
+	end,
+})
+
 function M.changed_files()
 	local fzf = guard()
 	if not fzf then return end
 
-	collect_files(function(files)
+	util.collect_files(function(files, cwd)
 		vim.schedule(function()
 			if #files == 0 then
 				vim.notify("No changed files", vim.log.levels.INFO)
@@ -142,7 +87,13 @@ function M.changed_files()
 			local entries = {}
 			for _, f in ipairs(files) do
 				local indicator = f.live and "\xe2\x97\x8f" or "\xe2\x97\x8b" -- ● / ○
-				local add, del = file_stats(f.abs)
+				local old_text = util.get_old_text(f.abs)
+				local new_text = util.read_file(f.abs) or ""
+				local hunks = util.compute_hunks(old_text, new_text)
+				local add, del = 0, 0
+				if hunks then
+					add, del = util.hunk_stats(hunks)
+				end
 				local stats = ""
 				if add > 0 or del > 0 then
 					stats = " (+" .. add .. "/-" .. del .. ")"
@@ -183,13 +134,15 @@ function M.hunks()
 	local fzf = guard()
 	if not fzf then return end
 
-	collect_files(function(files)
+	util.collect_files(function(files, cwd)
 		vim.schedule(function()
 			local entries = {}
 			local hunk_map = {} -- entry string -> { filepath, line }
 
 			for _, f in ipairs(files) do
-				local hunks = compute_hunks(f.abs)
+				local old_text = util.get_old_text(f.abs)
+				local new_text = util.read_file(f.abs) or ""
+				local hunks = util.compute_hunks(old_text, new_text)
 				if hunks then
 					for _, h in ipairs(hunks) do
 						local new_start, new_count, old_count = h[3], h[4], h[2]
