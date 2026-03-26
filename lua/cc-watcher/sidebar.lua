@@ -296,21 +296,17 @@ local function do_render(session_files)
 		lines[5] = "  Waiting for changes..."
 		hls[#hls + 1] = { 4, "ClaudeInactive" }
 	else
-		-- Ensure latest_changed_file is valid (exists in displayed set)
-		local displayed_set = {}
-		for _, f in ipairs(displayed_files) do displayed_set[f.abs] = true end
-
-		if not latest_changed_file or not displayed_set[latest_changed_file] then
-			-- Re-seed: walk JSONL backwards to find most recent displayed file
-			latest_changed_file = nil
-			if session_files then
-				for i = #session_files, 1, -1 do
-					if displayed_set[session_files[i]] then
-						latest_changed_file = session_files[i]
-						break
-					end
-				end
+		-- Find the most recently modified file by mtime (always accurate)
+		local best_mtime, best_file = 0, nil
+		for _, f in ipairs(displayed_files) do
+			local st = vim.uv.fs_stat(f.abs)
+			if st and st.mtime.sec > best_mtime then
+				best_mtime = st.mtime.sec
+				best_file = f.abs
 			end
+		end
+		if best_file then
+			latest_changed_file = best_file
 		end
 
 		-- Flat list: full relative path per line
