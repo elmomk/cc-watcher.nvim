@@ -9,7 +9,7 @@ local defaults = {
 		toggle_diff = "<leader>cd",
 	},
 	integrations = {
-		telescope = false,
+		snacks = false,
 		fzf_lua = false,
 		trouble = false,
 		diffview = false,
@@ -89,7 +89,7 @@ end
 M.lazy = {
 	cmd = {
 		"ClaudeSidebar", "ClaudeDiff",
-		"ClaudeTelescope", "ClaudeFzf", "ClaudeTrouble", "ClaudeDiffview",
+		"ClaudeSnacks", "ClaudeFzf", "ClaudeTrouble", "ClaudeDiffview",
 	},
 	keys = {
 		{ "<leader>cs", function() require("cc-watcher")._ensure_setup(); require("cc-watcher.sidebar").toggle() end, desc = "Claude - toggle sidebar" },

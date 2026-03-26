@@ -15,6 +15,18 @@ function M.relpath(filepath, cwd)
 	return filepath
 end
 
+--- Get path relative to git repo root (works in worktrees)
+---@param filepath string absolute path
+---@return string|nil relative path from git root
+function M.git_relpath(filepath)
+	local toplevel = vim.fn.systemlist("git rev-parse --show-toplevel 2>/dev/null")[1]
+	if vim.v.shell_error ~= 0 or not toplevel or toplevel == "" then return nil end
+	if filepath:sub(1, #toplevel) == toplevel then
+		return filepath:sub(#toplevel + 2)
+	end
+	return nil
+end
+
 --- Read file contents from disk via libuv
 ---@param filepath string
 ---@return string|nil data, nil on failure
@@ -34,17 +46,24 @@ end
 --- Get the "before" text for a file (snapshot or git HEAD fallback)
 ---@param filepath string absolute path
 ---@param cwd string|nil
+---@param current_text string|nil current file content for snapshot comparison
 ---@return string old text (may be empty)
-function M.get_old_text(filepath, cwd)
+function M.get_old_text(filepath, cwd, current_text)
 	local snapshots = require("cc-watcher.snapshots")
 	local snap = snapshots.get(filepath)
-	if snap and snap.raw ~= "" then return snap.raw end
 
-	local rel = M.relpath(filepath, cwd)
-	-- Reject paths that could escape the project
-	if rel:sub(1, 1) == "/" or rel:find("%.%./") then return "" end
+	-- Use snapshot if it exists AND differs from current content
+	if snap and snap.raw ~= "" then
+		if not current_text or snap.raw ~= current_text then
+			return snap.raw
+		end
+		-- Snapshot matches current — fall through to git HEAD
+	end
 
-	local lines = vim.fn.systemlist("git show HEAD:" .. vim.fn.shellescape(rel) .. " 2>/dev/null")
+	local git_rel = M.git_relpath(filepath)
+	if not git_rel or git_rel:find("%.%./") then return "" end
+
+	local lines = vim.fn.systemlist("git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
 	if vim.v.shell_error == 0 and #lines > 0 then
 		return table.concat(lines, "\n") .. "\n"
 	end

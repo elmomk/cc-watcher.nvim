@@ -22,25 +22,25 @@ end, {
 	desc = "Toggle inline diff for current file",
 })
 
-vim.api.nvim_create_user_command("ClaudeTelescope", function(args)
+vim.api.nvim_create_user_command("ClaudeSnacks", function(args)
 	ensure()
 	local cfg = require("cc-watcher").config
-	if not cfg.integrations.telescope then
-		vim.notify("cc-watcher: telescope integration is disabled. Enable it with integrations.telescope = true", vim.log.levels.WARN)
+	if not cfg.integrations.snacks then
+		vim.notify("cc-watcher: snacks integration is disabled. Enable it with integrations.snacks = true", vim.log.levels.WARN)
 		return
 	end
-	local ok, tel = pcall(require, "cc-watcher.telescope")
+	local ok, snacks_mod = pcall(require, "cc-watcher.snacks")
 	if not ok then
-		vim.notify("cc-watcher: telescope.nvim not found", vim.log.levels.ERROR)
+		vim.notify("cc-watcher: snacks.nvim not found", vim.log.levels.ERROR)
 		return
 	end
 	local sub = args.fargs[1]
-	if sub == "hunks" then tel.hunks()
-	else tel.changed_files() end
+	if sub == "hunks" then snacks_mod.hunks()
+	else snacks_mod.changed_files() end
 end, {
 	nargs = "?",
 	complete = function() return { "changed_files", "hunks" } end,
-	desc = "Telescope: Claude Code changes",
+	desc = "Snacks: Claude Code changes",
 })
 
 vim.api.nvim_create_user_command("ClaudeFzf", function(args)

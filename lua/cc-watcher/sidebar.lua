@@ -245,7 +245,7 @@ local function show_help()
 		"│    <leader>cd  Toggle diff     │",
 		"│                                │",
 		"│  Integrations (opt-in):        │",
-		"│    :ClaudeTelescope [hunks]    │",
+		"│    :ClaudeSnacks [hunks]       │",
 		"│    :ClaudeFzf [hunks]          │",
 		"│    :ClaudeTrouble              │",
 		"│    :ClaudeDiffview [file]      │",

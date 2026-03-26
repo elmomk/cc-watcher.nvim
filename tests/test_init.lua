@@ -34,7 +34,7 @@ T["init"]["setup() merges opts with defaults"] = function()
 	-- Defaults preserved for unset values
 	MiniTest.expect.equality(cc.config.keys.toggle_sidebar, "<leader>cs")
 	MiniTest.expect.equality(cc.config.keys.toggle_diff, "<leader>cd")
-	MiniTest.expect.equality(cc.config.integrations.telescope, false)
+	MiniTest.expect.equality(cc.config.integrations.snacks, false)
 	MiniTest.expect.equality(cc.config.integrations.fzf_lua, false)
 	MiniTest.expect.equality(cc.config.integrations.trouble, false)
 	MiniTest.expect.equality(cc.config.integrations.diffview, false)
@@ -45,12 +45,12 @@ T["init"]["setup() deep merges nested tables"] = function()
 
 	cc.setup({
 		keys = { toggle_sidebar = "<leader>cc" },
-		integrations = { telescope = true },
+		integrations = { snacks = true },
 	})
 
 	-- Overridden
 	MiniTest.expect.equality(cc.config.keys.toggle_sidebar, "<leader>cc")
-	MiniTest.expect.equality(cc.config.integrations.telescope, true)
+	MiniTest.expect.equality(cc.config.integrations.snacks, true)
 
 	-- Defaults preserved for siblings
 	MiniTest.expect.equality(cc.config.keys.toggle_diff, "<leader>cd")
@@ -65,7 +65,7 @@ T["init"]["setup() with no args uses all defaults"] = function()
 	MiniTest.expect.equality(cc.config.sidebar_width, 36)
 	MiniTest.expect.equality(cc.config.keys.toggle_sidebar, "<leader>cs")
 	MiniTest.expect.equality(cc.config.keys.toggle_diff, "<leader>cd")
-	MiniTest.expect.equality(cc.config.integrations.telescope, false)
+	MiniTest.expect.equality(cc.config.integrations.snacks, false)
 end
 
 T["init"]["M.lazy table has expected structure"] = function()
@@ -81,7 +81,7 @@ T["init"]["M.lazy table has expected structure"] = function()
 	for _, c in ipairs(cc.lazy.cmd) do cmds[c] = true end
 	MiniTest.expect.equality(cmds["ClaudeSidebar"], true)
 	MiniTest.expect.equality(cmds["ClaudeDiff"], true)
-	MiniTest.expect.equality(cmds["ClaudeTelescope"], true)
+	MiniTest.expect.equality(cmds["ClaudeSnacks"], true)
 	MiniTest.expect.equality(cmds["ClaudeFzf"], true)
 	MiniTest.expect.equality(cmds["ClaudeTrouble"], true)
 	MiniTest.expect.equality(cmds["ClaudeDiffview"], true)

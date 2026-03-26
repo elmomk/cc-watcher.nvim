@@ -28,30 +28,45 @@ function M.setup()
 	})
 end
 
-local function get_before_lines(filepath)
+local function get_before_lines(filepath, current_raw)
 	local snap = snapshots.get(filepath)
-	if snap then return snap.lines end
-	local rel = util.relpath(filepath)
-	local lines = vim.fn.systemlist("git show HEAD:" .. vim.fn.shellescape(rel) .. " 2>/dev/null")
+	if snap then
+		-- If snapshot differs from current, use it
+		if not current_raw or snap.raw ~= current_raw then
+			return snap.lines
+		end
+	end
+	-- Fall through to git
+	local git_rel = util.git_relpath(filepath)
+	if not git_rel then return nil end
+	local lines = vim.fn.systemlist("git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
 	if vim.v.shell_error == 0 and #lines > 0 then return lines end
 	return nil
 end
 
-local function get_before_raw(filepath)
+local function get_before_raw(filepath, current_raw)
 	local snap = snapshots.get(filepath)
-	if snap then return snap.raw end
-	local bl = get_before_lines(filepath)
-	if bl then return table.concat(bl, "\n") .. "\n" end
+	if snap then
+		-- If snapshot differs from current, use it
+		if not current_raw or snap.raw ~= current_raw then
+			return snap.raw
+		end
+	end
+	-- Fall through to git
+	local git_rel = util.git_relpath(filepath)
+	if not git_rel then return nil end
+	local lines = vim.fn.systemlist("git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
+	if vim.v.shell_error == 0 and #lines > 0 then return table.concat(lines, "\n") .. "\n" end
 	return nil
 end
 
 local function compute_hunks(filepath, bufnr)
-	local old_text = get_before_raw(filepath)
+	local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	local new_text = table.concat(current_lines, "\n") .. "\n"
+	local old_text = get_before_raw(filepath, new_text)
 	if not old_text then return nil end
 	-- Normalize: ensure trailing newline
 	if old_text:sub(-1) ~= "\n" then old_text = old_text .. "\n" end
-	local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	local new_text = table.concat(current_lines, "\n") .. "\n"
 	return vim.diff(old_text, new_text, { result_type = "indices", algorithm = "histogram" })
 end
 
@@ -141,7 +156,9 @@ function M.show(filepath)
 		return
 	end
 
-	local before_lines = get_before_lines(filepath)
+	local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	local current_raw = table.concat(current_lines, "\n") .. "\n"
+	local before_lines = get_before_lines(filepath, current_raw)
 	if not before_lines then
 		vim.notify("No snapshot or git history for this file", vim.log.levels.WARN)
 		return
@@ -255,7 +272,9 @@ function M.show(filepath)
 		local state = active_diffs[bufnr]
 		if not state then return end
 
-		local bl = get_before_lines(state.filepath)
+		local cur_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+		local cur_raw = table.concat(cur_lines, "\n") .. "\n"
+		local bl = get_before_lines(state.filepath, cur_raw)
 		if not bl then return end
 
 		for _, h in ipairs(state.hunks) do

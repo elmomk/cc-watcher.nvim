@@ -135,39 +135,29 @@ function M.find_latest_jsonl(cwd)
 		return jsonl_dir_cache.path
 	end
 
-	local handle = vim.uv.fs_scandir(projects_dir)
-	if not handle then return nil end
+	-- Claude Code encodes project path: /home/user/project → -home-user-project
+	local encoded = cwd:gsub("/", "-")
+	local project_dir = projects_dir .. "/" .. encoded
+
+	local handle = vim.uv.fs_scandir(project_dir)
+	if not handle then
+		-- Cache negative result too
+		jsonl_dir_cache.cwd = cwd
+		jsonl_dir_cache.path = nil
+		jsonl_dir_cache.checked_at = now
+		return nil
+	end
 
 	local best_path, best_mtime = nil, 0
 	while true do
 		local name, typ = vim.uv.fs_scandir_next(handle)
 		if not name then break end
-		if typ == "directory" then
-			local dir_path = projects_dir .. "/" .. name
-			local dir_handle = vim.uv.fs_scandir(dir_path)
-			if dir_handle then
-				while true do
-					local fname, ftyp = vim.uv.fs_scandir_next(dir_handle)
-					if not fname then break end
-					if ftyp == "file" and fname:match("%.jsonl$") then
-						local fpath = dir_path .. "/" .. fname
-						local stat = vim.uv.fs_stat(fpath)
-						if stat and stat.mtime.sec > best_mtime then
-							local fd = vim.uv.fs_open(fpath, "r", 438)
-							if fd then
-								local chunk = vim.uv.fs_read(fd, 4096, 0)
-								vim.uv.fs_close(fd)
-								if chunk then
-									local line = chunk:match("^[^\n]+")
-									if line and line:find('"' .. cwd .. '"', 1, true) then
-										best_path = fpath
-										best_mtime = stat.mtime.sec
-									end
-								end
-							end
-						end
-					end
-				end
+		if typ == "file" and name:match("%.jsonl$") then
+			local fpath = project_dir .. "/" .. name
+			local stat = vim.uv.fs_stat(fpath)
+			if stat and stat.mtime.sec > best_mtime then
+				best_path = fpath
+				best_mtime = stat.mtime.sec
 			end
 		end
 	end
