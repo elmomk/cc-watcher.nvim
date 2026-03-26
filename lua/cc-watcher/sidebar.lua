@@ -122,6 +122,11 @@ end
 local function do_render(session_files)
 	if not is_open() then return end
 
+	-- Seed latest_changed_file from JSONL if not yet set
+	if not latest_changed_file and session_files and #session_files > 0 then
+		latest_changed_file = session_files[#session_files]
+	end
+
 	local WIDTH = get_width()
 	displayed_files = collect_files(session_files)
 	line_to_file = {}
