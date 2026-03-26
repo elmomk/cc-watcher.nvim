@@ -25,6 +25,7 @@ function M.setup()
 	hl("ClaudeDir",      { link = "Directory" })
 	hl("ClaudeFile",        { link = "Normal" })
 	hl("ClaudeFileCurrent", { bold = true, underline = true, link = "Normal" })
+	hl("ClaudeFileLatest",  { italic = true, link = "DiagnosticWarn" })
 	hl("ClaudeHelp",     { link = "Comment" })
 	hl("ClaudeStats",    { link = "Comment" })
 

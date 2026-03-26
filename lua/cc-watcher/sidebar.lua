@@ -15,6 +15,7 @@ local HEADER_LINES = 3 -- title, status, separator
 
 local displayed_files = {}
 local line_to_file = {} -- line number -> file entry, rebuilt each render
+local latest_changed_file = nil -- abs path of most recently changed file
 local ns = vim.api.nvim_create_namespace("claude_sidebar")
 local augroup = vim.api.nvim_create_augroup("ClaudeSidebar", { clear = true })
 
@@ -197,13 +198,16 @@ local function do_render(session_files)
 				local icon_start = 2 + #indicator + 1
 				hls[#hls + 1] = { cur_ln, icon_hl, icon_start, icon_start + #icon }
 			end
-			-- Path (bold highlight if it's the currently open file)
+			-- Path highlights: current file > latest changed > normal
 			local is_current = current_file and file.abs == current_file
+			local is_latest = latest_changed_file and file.abs == latest_changed_file
 			if is_current then
 				hls[#hls + 1] = { cur_ln, "ClaudeFileCurrent", 0, -1 }
 				current_file_row = #lines
+			elseif is_latest then
+				hls[#hls + 1] = { cur_ln, "ClaudeFileLatest", 0, -1 }
 			end
-			local file_hl = is_current and "ClaudeFileCurrent" or "ClaudeFile"
+			local file_hl = is_current and "ClaudeFileCurrent" or (is_latest and "ClaudeFileLatest" or "ClaudeFile")
 			hls[#hls + 1] = { cur_ln, file_hl, #prefix, #prefix + #file.rel }
 			-- Stats
 			if stats ~= "" then
@@ -391,6 +395,7 @@ end
 
 function M.setup()
 	watcher.on_change(function(filepath, rel)
+		latest_changed_file = filepath
 		pending_changes[#pending_changes + 1] = rel
 		debounce_timer:stop()
 		debounce_timer:start(500, 0, vim.schedule_wrap(flush_notifications))
@@ -407,6 +412,10 @@ function M.setup()
 
 	-- Event-driven sidebar refresh on JSONL change
 	session.on_jsonl_change(function()
+		-- Update latest_changed_file from session data
+		session.get_claude_edited_files_async(function(files)
+			if #files > 0 then latest_changed_file = files[#files] end
+		end)
 		if not is_open() then return end
 		jsonl_debounce:stop()
 		jsonl_debounce:start(300, 0, vim.schedule_wrap(function() M.render() end))
