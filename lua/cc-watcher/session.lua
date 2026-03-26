@@ -139,8 +139,9 @@ function M.find_latest_jsonl(cwd)
 		return jsonl_dir_cache.path
 	end
 
-	-- Claude Code encodes project path: /home/user/project → -home-user-project
-	local encoded = cwd:gsub("/", "-")
+	-- Claude Code encodes project path: /home/user/my_project → -home-user-my-project
+	-- Both / and _ are replaced with -
+	local encoded = cwd:gsub("[/_]", "-")
 	local project_dir = projects_dir .. "/" .. encoded
 
 	local handle = vim.uv.fs_scandir(project_dir)
