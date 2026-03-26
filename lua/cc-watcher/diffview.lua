@@ -127,16 +127,18 @@ function M.open()
 			local idx = 1
 			local scratch_bufs = {}
 
+			-- Persistent windows: left = before, right = current
+			local left_win = vim.api.nvim_get_current_win()
+			vim.cmd("vertical rightbelow split")
+			local right_win = vim.api.nvim_get_current_win()
+
 			local function show_file(i)
 				if i < 1 or i > #files then return end
 				idx = i
 
-				-- Validate tab still exists
-				local tab_valid = false
-				for _, tp in ipairs(vim.api.nvim_list_tabpages()) do
-					if tp == tab then tab_valid = true; break end
+				if not vim.api.nvim_win_is_valid(left_win) or not vim.api.nvim_win_is_valid(right_win) then
+					return
 				end
-				if not tab_valid then return end
 
 				local file = files[idx]
 				local before_buf = create_before_buf(file.abs)
@@ -146,22 +148,9 @@ function M.open()
 					return
 				end
 
-				-- Close existing diff windows in this tab
-				local tab_wins = vim.api.nvim_tabpage_list_wins(tab)
-				-- Turn off diff in all windows first
-				for _, w in ipairs(tab_wins) do
-					if vim.api.nvim_win_is_valid(w) then
-						vim.api.nvim_win_call(w, function()
-							vim.cmd("diffoff")
-						end)
-					end
-				end
-
-				-- Close all but the first window
-				while #vim.api.nvim_tabpage_list_wins(tab) > 1 do
-					local wins = vim.api.nvim_tabpage_list_wins(tab)
-					vim.api.nvim_win_close(wins[#wins], true)
-				end
+				-- Turn off diff in both windows
+				vim.api.nvim_win_call(left_win, function() vim.cmd("diffoff") end)
+				vim.api.nvim_win_call(right_win, function() vim.cmd("diffoff") end)
 
 				-- Clean up old scratch buffers
 				for _, b in ipairs(scratch_bufs) do
@@ -171,51 +160,38 @@ function M.open()
 				end
 				scratch_bufs = { before_buf }
 
-				-- Left: snapshot
-				local win = vim.api.nvim_tabpage_list_wins(tab)[1]
-				vim.api.nvim_win_set_buf(win, before_buf)
-				vim.api.nvim_win_call(win, function()
-					vim.cmd("diffthis")
-				end)
+				-- Left: before content
+				vim.api.nvim_win_set_buf(left_win, before_buf)
+				vim.api.nvim_win_call(left_win, function() vim.cmd("diffthis") end)
 
 				-- Right: current file
-				vim.cmd("vertical rightbelow split " .. vim.fn.fnameescape(file.abs))
+				vim.cmd("edit " .. vim.fn.fnameescape(file.abs))
+				local cur_buf = vim.api.nvim_get_current_buf()
+				vim.api.nvim_win_set_buf(right_win, cur_buf)
+				vim.api.nvim_set_current_win(right_win)
 				vim.cmd("diffthis")
 
-				-- Status line showing position
-				local title = string.format(
-					" [%d/%d] %s",
-					idx, #files, file.rel
-				)
-				vim.notify(title, vim.log.levels.INFO)
+				vim.notify(string.format(" [%d/%d] %s", idx, #files, file.rel), vim.log.levels.INFO)
 
-				-- Set up navigation keymaps on both windows
+				-- Set up navigation keymaps on both buffers
 				local function setup_keys(bufnr)
 					local opts = { buffer = bufnr, nowait = true, silent = true }
-
 					vim.keymap.set("n", "]f", function()
 						if idx < #files then show_file(idx + 1) end
 					end, opts)
-
 					vim.keymap.set("n", "[f", function()
 						if idx > 1 then show_file(idx - 1) end
 					end, opts)
-
-					vim.keymap.set("n", "q", function()
-						M.close()
-					end, opts)
+					vim.keymap.set("n", "q", function() M.close() end, opts)
 				end
 
 				setup_keys(before_buf)
-				local cur_buf = vim.api.nvim_get_current_buf()
 				if cur_buf ~= before_buf then
 					setup_keys(cur_buf)
 				end
 			end
 
 			show_file(1)
-
-			-- Track scratch buffers for cleanup
 			state.bufs = scratch_bufs
 		end)
 	end)
