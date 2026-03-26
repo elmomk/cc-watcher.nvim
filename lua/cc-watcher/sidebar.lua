@@ -21,6 +21,7 @@ local augroup = vim.api.nvim_create_augroup("ClaudeSidebar", { clear = true })
 -- Reusable timers (avoids handle leaks)
 local debounce_timer = vim.uv.new_timer()
 local jsonl_debounce = vim.uv.new_timer()
+local bufenter_debounce = vim.uv.new_timer()
 local pending_changes = {}
 
 local function get_width()
@@ -34,11 +35,27 @@ end
 
 local relpath = util.relpath
 
+local _sep_cache = { width = 0, str = "" }
+local function get_separator(width)
+	if _sep_cache.width ~= width then
+		_sep_cache.width = width
+		_sep_cache.str = string.rep("─", width)
+	end
+	return _sep_cache.str
+end
+
 --- Try to get a devicon for a filename
+local _devicons = nil
+local _devicons_checked = false
+
 local function get_icon(name)
-	local ok, devicons = pcall(require, "nvim-web-devicons")
-	if ok then
-		local icon, hl = devicons.get_icon(name, vim.fn.fnamemodify(name, ":e"), { default = true })
+	if not _devicons_checked then
+		_devicons_checked = true
+		local ok, mod = pcall(require, "nvim-web-devicons")
+		if ok then _devicons = mod end
+	end
+	if _devicons then
+		local icon, hl = _devicons.get_icon(name, vim.fn.fnamemodify(name, ":e"), { default = true })
 		return icon or "", hl
 	end
 	return "", nil
@@ -72,14 +89,13 @@ end
 ---@return number add, number del, string stats_str
 local function file_stats(filepath)
 	-- Try from loaded buffer first
-	for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-		if vim.api.nvim_buf_is_loaded(bufnr) and vim.api.nvim_buf_get_name(bufnr) == filepath then
-			local add, del = diff.file_stats(filepath, bufnr)
-			if add > 0 or del > 0 then
-				return add, del, "+" .. add .. " -" .. del
-			end
-			return 0, 0, ""
+	local bufnr = vim.fn.bufnr(filepath)
+	if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
+		local add, del = diff.file_stats(filepath, bufnr)
+		if add > 0 or del > 0 then
+			return add, del, "+" .. add .. " -" .. del
 		end
+		return 0, 0, ""
 	end
 	-- No buffer — compute from disk using git HEAD as baseline
 	local old_text = util.get_old_text(filepath)
@@ -125,7 +141,7 @@ local function do_render(session_files)
 	lines[1] = " 󰚩 Claude Code"
 	hls[#hls + 1] = { 0, "ClaudeHeader" }
 
-	local cwd = vim.fn.getcwd()
+	local cwd = vim.uv.cwd()
 	local active = session.find_active_session(cwd)
 	if active then
 		lines[2] = "  session active"
@@ -135,7 +151,7 @@ local function do_render(session_files)
 		hls[#hls + 1] = { 1, "ClaudeInactive" }
 	end
 
-	lines[3] = string.rep("─", WIDTH)
+	lines[3] = get_separator(WIDTH)
 	hls[#hls + 1] = { 2, "ClaudeSep" }
 
 	if #displayed_files == 0 then
@@ -216,7 +232,7 @@ local function do_render(session_files)
 
 	-- Footer
 	table.insert(lines, "")
-	table.insert(lines, string.rep("─", WIDTH))
+	table.insert(lines, get_separator(WIDTH))
 	hls[#hls + 1] = { #lines - 1, "ClaudeSep" }
 
 	-- Summary line
@@ -398,13 +414,11 @@ function M.setup()
 
 		if is_open() then M.render() end
 
-		for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-			if vim.api.nvim_buf_is_loaded(bufnr) and vim.api.nvim_buf_get_name(bufnr) == filepath then
-				vim.schedule(function()
-					diff.apply_signs(bufnr, filepath)
-				end)
-				break
-			end
+		local bufnr = vim.fn.bufnr(filepath)
+		if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
+			vim.schedule(function()
+				diff.apply_signs(bufnr, filepath)
+			end)
 		end
 	end)
 
@@ -420,7 +434,8 @@ function M.setup()
 		group = augroup,
 		callback = function()
 			if is_open() then
-				vim.schedule(function() M.render() end)
+				bufenter_debounce:stop()
+				bufenter_debounce:start(150, 0, vim.schedule_wrap(function() M.render() end))
 			end
 		end,
 	})

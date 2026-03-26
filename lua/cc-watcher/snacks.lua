@@ -4,6 +4,9 @@ local util = require("cc-watcher.util")
 
 local M = {}
 
+local diff_ns = vim.api.nvim_create_namespace("cc_watcher_diff")
+local preview_cache = {} -- filepath -> { unified = string, mtime = number }
+
 function M.changed_files()
 	local ok, Snacks = pcall(require, "snacks")
 	if not ok then
@@ -51,9 +54,20 @@ function M.changed_files()
 				preview = function(ctx)
 					require("cc-watcher.highlights").setup()
 					local item = ctx.item
-					local old_text = util.get_old_text(item.file, item.cwd)
-					local new_text = util.read_file(item.file) or ""
-					local unified = util.compute_unified(old_text, new_text)
+					local stat = vim.uv.fs_stat(item.file)
+					local mtime = stat and stat.mtime.sec or 0
+					local cached = preview_cache[item.file]
+
+					local unified
+					if cached and cached.mtime == mtime then
+						unified = cached.unified
+					else
+						local old_text = util.get_old_text(item.file, item.cwd)
+						local new_text = util.read_file(item.file) or ""
+						unified = util.compute_unified(old_text, new_text)
+						preview_cache[item.file] = { unified = unified, mtime = mtime }
+					end
+
 					ctx.preview:reset()
 					if unified and unified ~= "" then
 						local lines = vim.split(unified, "\n", { plain = true })
@@ -62,7 +76,6 @@ function M.changed_files()
 						local buf = ctx.preview.win.buf
 						vim.schedule(function()
 							if not vim.api.nvim_buf_is_valid(buf) then return end
-							local diff_ns = vim.api.nvim_create_namespace("cc_watcher_diff")
 							vim.api.nvim_buf_clear_namespace(buf, diff_ns, 0, -1)
 							for i, line in ipairs(lines) do
 								local hl = nil

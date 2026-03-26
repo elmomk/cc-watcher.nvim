@@ -21,7 +21,7 @@ local function parse_file_entry(entry)
 	-- Format: "● rel/path (+N/-M)" or "○ rel/path (+N/-M)"
 	local rel = entry:match("^[●○]%s+(%S+)")
 	if not rel then return nil end
-	local cwd = vim.fn.getcwd()
+	local cwd = vim.uv.cwd()
 	local abs = cwd .. "/" .. rel
 	if vim.uv.fs_stat(abs) then return abs end
 	return rel
@@ -32,7 +32,7 @@ local function parse_hunk_entry(entry)
 	-- Format: "rel/path:123 — +N/-M lines"
 	local rel, line = entry:match("^(%S+):(%d+)")
 	if not rel then return nil, nil end
-	local cwd = vim.fn.getcwd()
+	local cwd = vim.uv.cwd()
 	local abs = cwd .. "/" .. rel
 	if vim.uv.fs_stat(abs) then return abs, tonumber(line) end
 	return rel, tonumber(line)
@@ -64,14 +64,19 @@ local function diff_preview_tmpfile(filepath)
 end
 
 -- Cleanup cached tmp files on exit
-vim.api.nvim_create_autocmd("VimLeavePre", {
-	callback = function()
-		for _, entry in pairs(preview_cache) do
-			pcall(vim.uv.fs_unlink, entry.tmp)
-		end
-		preview_cache = {}
-	end,
-})
+local _cleanup_registered = false
+
+if not _cleanup_registered then
+	_cleanup_registered = true
+	vim.api.nvim_create_autocmd("VimLeavePre", {
+		callback = function()
+			for _, entry in pairs(preview_cache) do
+				pcall(vim.uv.fs_unlink, entry.tmp)
+			end
+			preview_cache = {}
+		end,
+	})
+end
 
 function M.changed_files()
 	local fzf = guard()

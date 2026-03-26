@@ -5,12 +5,20 @@ local M = {}
 
 M.FILE_MODE = 384 -- octal 0600: rw for owner only
 
+local git_toplevel_cache = {} -- dir -> toplevel string or false
+local git_show_cache = {} -- git_rel -> string
+
+--- Invalidate cached git HEAD content (call after git operations)
+function M.invalidate_git_cache()
+	git_show_cache = {}
+end
+
 --- Compute relative path from cwd
 ---@param filepath string absolute path
----@param cwd string|nil defaults to vim.fn.getcwd()
+---@param cwd string|nil defaults to vim.uv.cwd()
 ---@return string
 function M.relpath(filepath, cwd)
-	cwd = cwd or vim.fn.getcwd()
+	cwd = cwd or vim.uv.cwd()
 	if filepath:sub(1, #cwd + 1) == cwd .. "/" then return filepath:sub(#cwd + 2) end
 	-- Fallback: try git root for worktree paths
 	local git_rel = M.git_relpath(filepath)
@@ -24,10 +32,19 @@ end
 ---@return string|nil directory used for git commands
 function M.git_relpath(filepath)
 	local dir = vim.fn.fnamemodify(filepath, ":h")
-	local toplevel = vim.fn.systemlist("git -C " .. vim.fn.shellescape(dir) .. " rev-parse --show-toplevel 2>/dev/null")[1]
-	if vim.v.shell_error ~= 0 or not toplevel or toplevel == "" then return nil, nil end
-	if filepath:sub(1, #toplevel + 1) == toplevel .. "/" then
-		return filepath:sub(#toplevel + 2), dir
+	local cached = git_toplevel_cache[dir]
+	if cached == nil then
+		local toplevel = vim.fn.systemlist("git -C " .. vim.fn.shellescape(dir) .. " rev-parse --show-toplevel 2>/dev/null")[1]
+		if vim.v.shell_error ~= 0 or not toplevel or toplevel == "" then
+			git_toplevel_cache[dir] = false
+		else
+			git_toplevel_cache[dir] = toplevel
+		end
+		cached = git_toplevel_cache[dir]
+	end
+	if not cached then return nil, nil end
+	if filepath:sub(1, #cached + 1) == cached .. "/" then
+		return filepath:sub(#cached + 2), dir
 	end
 	return nil, nil
 end
@@ -58,11 +75,15 @@ function M.get_old_text(filepath, cwd, current_text)
 	-- typically after Claude has already edited the file (post-edit content).
 	local git_rel, git_dir = M.git_relpath(filepath)
 	if git_rel and not git_rel:find("%.%./") then
+		local cached = git_show_cache[git_rel]
+		if cached then return cached end
 		local cmd = "git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null"
 		if git_dir then cmd = "git -C " .. vim.fn.shellescape(git_dir) .. " show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null" end
 		local lines = vim.fn.systemlist(cmd)
 		if vim.v.shell_error == 0 and #lines > 0 then
-			return table.concat(lines, "\n") .. "\n"
+			local result = table.concat(lines, "\n") .. "\n"
+			git_show_cache[git_rel] = result
+			return result
 		end
 	end
 
@@ -114,7 +135,7 @@ end
 function M.collect_files(callback)
 	local watcher = require("cc-watcher.watcher")
 	local session = require("cc-watcher.session")
-	local cwd = vim.fn.getcwd()
+	local cwd = vim.uv.cwd()
 	local files = {}
 	local seen = {}
 

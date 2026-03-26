@@ -23,7 +23,7 @@ end
 function M.mark_changed(filepath)
 	if changed_files[filepath] then return end
 
-	local cwd = vim.fn.getcwd()
+	local cwd = vim.uv.cwd()
 	local relpath = filepath
 	if filepath:sub(1, #cwd) == cwd then
 		relpath = filepath:sub(#cwd + 2)
@@ -89,14 +89,11 @@ local function watch_file(filepath)
 		if data ~= snap.raw then
 			M.mark_changed(filepath)
 
-			for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-				if vim.api.nvim_buf_is_loaded(bufnr)
-					and vim.api.nvim_buf_get_name(bufnr) == filepath then
-					vim.api.nvim_buf_call(bufnr, function()
-						vim.cmd("checktime")
-					end)
-					break
-				end
+			local bufnr = vim.fn.bufnr(filepath)
+			if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
+				vim.api.nvim_buf_call(bufnr, function()
+					vim.cmd("checktime")
+				end)
 			end
 		end
 	end))

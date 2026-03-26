@@ -3,7 +3,6 @@
 
 local M = {}
 
-local snapshots = require("cc-watcher.snapshots")
 local highlights = require("cc-watcher.highlights")
 local util = require("cc-watcher.util")
 
@@ -28,50 +27,22 @@ function M.setup()
 	})
 end
 
-local function get_before_lines(filepath, current_raw)
-	-- Always prefer git HEAD — snapshots are taken on BufReadPost (post-edit)
-	local git_rel, git_dir = util.git_relpath(filepath)
-	if git_rel and not git_rel:find("%.%./") then
-		local cmd = git_dir
-			and ("git -C " .. vim.fn.shellescape(git_dir) .. " show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
-			or ("git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
-		local lines = vim.fn.systemlist(cmd)
-		if vim.v.shell_error == 0 and #lines > 0 then return lines end
-	end
-	-- Fallback to snapshot (for new untracked files)
-	local snap = snapshots.get(filepath)
-	if snap and (not current_raw or snap.raw ~= current_raw) then
-		return snap.lines
-	end
-	return nil
+local function get_before_text(filepath, current_raw)
+	return util.get_old_text(filepath, nil, current_raw)
 end
 
-local function get_before_raw(filepath, current_raw)
-	-- Always prefer git HEAD — snapshots are taken on BufReadPost (post-edit)
-	local git_rel, git_dir = util.git_relpath(filepath)
-	if git_rel and not git_rel:find("%.%./") then
-		local cmd = git_dir
-			and ("git -C " .. vim.fn.shellescape(git_dir) .. " show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
-			or ("git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
-		local lines = vim.fn.systemlist(cmd)
-		if vim.v.shell_error == 0 and #lines > 0 then return table.concat(lines, "\n") .. "\n" end
-	end
-	-- Fallback to snapshot (for new untracked files)
-	local snap = snapshots.get(filepath)
-	if snap and (not current_raw or snap.raw ~= current_raw) then
-		return snap.raw
-	end
-	return nil
+local function get_before_lines(filepath, current_raw)
+	local raw = get_before_text(filepath, current_raw)
+	if raw == "" then return nil end
+	return vim.split(raw, "\n", { plain = true })
 end
 
 local function compute_hunks(filepath, bufnr)
 	local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local new_text = table.concat(current_lines, "\n") .. "\n"
-	local old_text = get_before_raw(filepath, new_text)
-	if not old_text then return nil end
-	-- Normalize: ensure trailing newline
-	if old_text:sub(-1) ~= "\n" then old_text = old_text .. "\n" end
-	return vim.diff(old_text, new_text, { result_type = "indices", algorithm = "histogram" })
+	local old_text = get_before_text(filepath, new_text)
+	if old_text == "" then return nil end
+	return util.compute_hunks(old_text, new_text)
 end
 
 local function clear(bufnr)

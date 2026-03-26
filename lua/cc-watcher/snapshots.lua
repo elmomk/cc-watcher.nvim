@@ -4,6 +4,7 @@
 local M = {}
 
 local store = {}
+local store_count = 0
 local MAX_FILE_SIZE = 10 * 1024 * 1024 -- 10 MB
 local MAX_SNAPSHOTS = 100
 local generation = 0
@@ -18,14 +19,12 @@ local function touch(filepath)
 end
 
 local function evict_oldest()
-	local count = 0
-	for _ in pairs(store) do count = count + 1 end
-	while count > MAX_SNAPSHOTS do
+	while store_count > MAX_SNAPSHOTS do
 		local min_gen, min_key = math.huge, nil
 		for k, v in pairs(store) do
 			if v._gen < min_gen then min_gen = v._gen; min_key = k end
 		end
-		if min_key then store[min_key] = nil; count = count - 1
+		if min_key then store[min_key] = nil; store_count = store_count - 1
 		else break end
 	end
 end
@@ -43,6 +42,7 @@ function M.take(filepath)
 	vim.uv.fs_close(fd)
 
 	if data then
+		local is_new = store[filepath] == nil
 		generation = generation + 1
 		store[filepath] = {
 			lines = vim.split(data, "\n", SPLIT_OPTS),
@@ -50,6 +50,7 @@ function M.take(filepath)
 			mtime = stat.mtime.sec,
 			_gen = generation,
 		}
+		if is_new then store_count = store_count + 1 end
 		evict_oldest()
 	end
 end
@@ -66,18 +67,18 @@ function M.has(filepath)
 end
 
 function M.remove(filepath)
+	if store[filepath] then store_count = store_count - 1 end
 	store[filepath] = nil
 end
 
 function M.clear()
 	store = {}
+	store_count = 0
 	generation = 0
 end
 
 function M.count()
-	local n = 0
-	for _ in pairs(store) do n = n + 1 end
-	return n
+	return store_count
 end
 
 return M

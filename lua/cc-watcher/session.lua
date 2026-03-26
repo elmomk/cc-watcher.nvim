@@ -37,6 +37,10 @@ end
 local jsonl_watcher_handle = nil
 local jsonl_change_callbacks = {}
 
+function M.invalidate_session_cache()
+	active_session_cache.checked_at = 0
+end
+
 ---@param cb fun(path: string)
 function M.on_jsonl_change(cb)
 	jsonl_change_callbacks[#jsonl_change_callbacks + 1] = cb
@@ -79,7 +83,7 @@ end
 ---@return { pid: number, sessionId: string, cwd: string }|nil
 function M.find_active_session(cwd)
 	local now = vim.uv.now() / 1000
-	if active_session_cache.cwd == cwd and (now - active_session_cache.checked_at) < 5 then
+	if active_session_cache.cwd == cwd and (now - active_session_cache.checked_at) < 30 then
 		return active_session_cache.result
 	end
 
@@ -210,7 +214,7 @@ end
 ---@param callback fun(files: string[])
 ---@param cwd string|nil
 function M.get_claude_edited_files_async(callback, cwd)
-	cwd = cwd or vim.fn.getcwd()
+	cwd = cwd or vim.uv.cwd()
 
 	local jsonl_path = M.find_latest_jsonl(cwd)
 	if not jsonl_path then
@@ -230,7 +234,7 @@ function M.watch_jsonl(cwd)
 		jsonl_watcher_handle = nil
 	end
 
-	cwd = cwd or vim.fn.getcwd()
+	cwd = cwd or vim.uv.cwd()
 	local path = M.find_latest_jsonl(cwd)
 	if not path then return end
 
@@ -245,6 +249,7 @@ function M.watch_jsonl(cwd)
 			return
 		end
 		if events and events.change then
+			active_session_cache.checked_at = 0  -- force re-check on next render
 			for _, cb in ipairs(jsonl_change_callbacks) do
 				pcall(cb, path)
 			end

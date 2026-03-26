@@ -12,6 +12,8 @@ local state = {
 	bufs = {},  -- scratch buffers we created
 }
 
+local keymapped_bufs = {} -- bufnr -> true
+
 --- Collect all files Claude has changed (watcher + session)
 ---@param callback fun(files: { abs: string, rel: string }[])
 local function collect_changed_files(callback)
@@ -122,6 +124,7 @@ function M.open()
 			local tab = vim.api.nvim_get_current_tabpage()
 			state.tabpage = tab
 			state.bufs = {}
+			keymapped_bufs = {}
 
 			-- Start with the first file
 			local idx = 1
@@ -185,9 +188,10 @@ function M.open()
 					vim.keymap.set("n", "q", function() M.close() end, opts)
 				end
 
-				setup_keys(before_buf)
-				if cur_buf ~= before_buf then
+				setup_keys(before_buf) -- always new scratch buf
+				if cur_buf ~= before_buf and not keymapped_bufs[cur_buf] then
 					setup_keys(cur_buf)
+					keymapped_bufs[cur_buf] = true
 				end
 			end
 
@@ -251,6 +255,7 @@ function M.close()
 
 	state.tabpage = nil
 	state.bufs = {}
+	keymapped_bufs = {}
 end
 
 return M
