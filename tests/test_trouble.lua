@@ -54,8 +54,12 @@ T["trouble"]["items() returns hunks for changed files"] = function()
 		MiniTest.expect.equality(type(item.text), "string")
 		MiniTest.expect.equality(item.text ~= "", true)
 		MiniTest.expect.equality(item.source, "claude")
-		-- type should be one of info, warning, hint
-		local valid_types = { info = true, warning = true, hint = true }
+		-- type should be a vim.diagnostic.severity value
+		local valid_types = {
+			[vim.diagnostic.severity.INFO] = true,
+			[vim.diagnostic.severity.WARN] = true,
+			[vim.diagnostic.severity.ERROR] = true,
+		}
 		MiniTest.expect.equality(valid_types[item.type] or false, true)
 	end
 
@@ -78,7 +82,7 @@ T["trouble"]["items() detects additions"] = function()
 	for _, item in ipairs(items) do
 		if item.filename == tmp and item.text:find("added") then
 			found = true
-			MiniTest.expect.equality(item.type, "info")
+			MiniTest.expect.equality(item.type, vim.diagnostic.severity.INFO)
 		end
 	end
 	MiniTest.expect.equality(found, true)
@@ -102,7 +106,7 @@ T["trouble"]["items() detects deletions"] = function()
 	for _, item in ipairs(items) do
 		if item.filename == tmp and item.text:find("deleted") then
 			found = true
-			MiniTest.expect.equality(item.type, "hint")
+			MiniTest.expect.equality(item.type, vim.diagnostic.severity.ERROR)
 		end
 	end
 	MiniTest.expect.equality(found, true)
@@ -126,7 +130,7 @@ T["trouble"]["items() detects changes"] = function()
 	for _, item in ipairs(items) do
 		if item.filename == tmp and item.text:find("changed") then
 			found = true
-			MiniTest.expect.equality(item.type, "warning")
+			MiniTest.expect.equality(item.type, vim.diagnostic.severity.WARN)
 		end
 	end
 	MiniTest.expect.equality(found, true)

@@ -1,7 +1,7 @@
 -- trouble.lua — trouble.nvim (v3) source for Claude Code changes
 -- Registers as a proper trouble source with "claude" mode.
 
-local Item = require("trouble.item")
+local ok_item, Item = pcall(require, "trouble.item")
 local util = require("cc-watcher.util")
 
 ---@class trouble.Source.claude: trouble.Source
@@ -43,9 +43,53 @@ local function hunk_severity(old_count, new_count)
 	return severity_map.changed
 end
 
+--- Build a plain items list (works without trouble.nvim, used by tests)
+---@return table[] items
+function M.items()
+	local watcher = require("cc-watcher.watcher")
+	local changed = watcher.get_changed_files()
+	local items = {}
+
+	for filepath in pairs(changed) do
+		local old_text = util.get_old_text(filepath)
+		local new_text = util.read_file(filepath)
+
+		if new_text then
+			local hunks = util.compute_hunks(old_text, new_text)
+			if hunks then
+				for _, h in ipairs(hunks) do
+					local old_count = h[2]
+					local new_start = h[3]
+					local new_count = h[4]
+					items[#items + 1] = {
+						filename = filepath,
+						lnum = new_start > 0 and new_start or 1,
+						col = 0,
+						text = hunk_description(old_count, new_count),
+						type = hunk_severity(old_count, new_count),
+						source = "claude",
+					}
+				end
+			end
+		end
+	end
+
+	table.sort(items, function(a, b)
+		if a.filename ~= b.filename then return a.filename < b.filename end
+		return a.lnum < b.lnum
+	end)
+	return items
+end
+
 ---@param cb trouble.Source.Callback
 ---@param ctx trouble.Source.ctx
 function M.get(cb, ctx)
+	if not ok_item then
+		-- Fallback: return plain items if trouble.nvim not available
+		cb(M.items())
+		return
+	end
+
 	util.collect_files(function(files)
 		vim.schedule(function()
 			local items = {} ---@type trouble.Item[]
