@@ -82,6 +82,27 @@ end, {
 	desc = "Trouble: Claude Code changes",
 })
 
+vim.api.nvim_create_user_command("ClaudeSnacks", function(args)
+	ensure()
+	local cfg = require("cc-watcher").config
+	if not cfg.integrations.snacks then
+		vim.notify("cc-watcher: snacks integration is disabled. Enable it with integrations.snacks = true", vim.log.levels.WARN)
+		return
+	end
+	local snacks_ok, snacks_mod = pcall(require, "cc-watcher.snacks")
+	if not snacks_ok then
+		vim.notify("cc-watcher: snacks.nvim not found", vim.log.levels.ERROR)
+		return
+	end
+	local sub = args.fargs[1]
+	if sub == "hunks" then snacks_mod.hunks()
+	else snacks_mod.changed_files() end
+end, {
+	nargs = "?",
+	complete = function() return { "changed_files", "hunks" } end,
+	desc = "Snacks picker: Claude Code changes",
+})
+
 vim.api.nvim_create_user_command("ClaudeDiffview", function(args)
 	ensure()
 	local cfg = require("cc-watcher").config

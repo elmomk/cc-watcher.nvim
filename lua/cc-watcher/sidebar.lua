@@ -33,6 +33,14 @@ end
 local function relpath(filepath)
 	local cwd = vim.fn.getcwd()
 	if filepath:sub(1, #cwd) == cwd then return filepath:sub(#cwd + 2) end
+	local dir = vim.fn.fnamemodify(filepath, ":h")
+	local root = vim.fn.systemlist("git -C " .. vim.fn.shellescape(dir) .. " rev-parse --show-toplevel 2>/dev/null")
+	if vim.v.shell_error == 0 and root[1] then
+		local git_root = root[1]
+		if filepath:sub(1, #git_root) == git_root then
+			return filepath:sub(#git_root + 2)
+		end
+	end
 	return filepath
 end
 
@@ -84,15 +92,30 @@ local function file_stats_string(filepath)
 	return ""
 end
 
+local function get_current_file()
+	for _, win in ipairs(vim.api.nvim_list_wins()) do
+		if win ~= sidebar_win then
+			local buf = vim.api.nvim_win_get_buf(win)
+			local name = vim.api.nvim_buf_get_name(buf)
+			if name ~= "" and vim.bo[buf].buftype == "" then
+				return name
+			end
+		end
+	end
+	return nil
+end
+
 local function do_render(session_files)
 	if not is_open() then return end
 
 	local WIDTH = get_width()
 	displayed_files = collect_files(session_files)
+	local current_file = get_current_file()
 
 	local lines = {}
 	local hls = {}
 	local total_add, total_del = 0, 0
+	local current_file_row = nil
 
 	-- Header
 	lines[1] = " 󰚩 Claude Code"
@@ -168,8 +191,14 @@ local function do_render(session_files)
 					local icon_start = #indent + #indicator + 1
 					hls[#hls + 1] = { cur_ln, icon_hl, icon_start, icon_start + #icon }
 				end
-				-- Filename
-				hls[#hls + 1] = { cur_ln, "ClaudeFile", #prefix, #prefix + #name }
+				-- Filename (highlight current file)
+				local is_current = current_file and file.abs == current_file
+				if is_current then
+					hls[#hls + 1] = { cur_ln, "ClaudeFileCurrent", 0, -1 }
+					current_file_row = #lines
+				end
+				local file_hl = is_current and "ClaudeFileCurrent" or "ClaudeFile"
+				hls[#hls + 1] = { cur_ln, file_hl, #prefix, #prefix + #name }
 				-- Stats
 				if stats ~= "" then
 					hls[#hls + 1] = { cur_ln, "ClaudeStats", #line - #stats, -1 }
@@ -217,6 +246,11 @@ local function do_render(session_files)
 			hl_group = h[2],
 			hl_eol = (h[4] or -1) == -1,
 		})
+	end
+
+	-- Move cursor to the current file's line
+	if current_file_row and sidebar_win and vim.api.nvim_win_is_valid(sidebar_win) then
+		pcall(vim.api.nvim_win_set_cursor, sidebar_win, { current_file_row, 0 })
 	end
 end
 
@@ -337,17 +371,9 @@ function M.open()
 		end
 	end
 
-	local function open_plain()
-		local f = file_at_cursor()
-		if f then
-			vim.cmd("wincmd p")
-			vim.cmd("edit " .. vim.fn.fnameescape(f.abs))
-		end
-	end
-
 	vim.keymap.set("n", "<CR>", open_with_diff, opts)
 	vim.keymap.set("n", "d", open_with_diff, opts)
-	vim.keymap.set("n", "o", open_plain, opts)
+	vim.keymap.set("n", "o", open_with_diff, opts)
 	vim.keymap.set("n", "r", function() M.render() end, opts)
 	vim.keymap.set("n", "q", function() M.close() end, opts)
 	vim.keymap.set("n", "g?", show_help, opts)
@@ -402,6 +428,16 @@ function M.setup()
 		jsonl_debounce:stop()
 		jsonl_debounce:start(300, 0, vim.schedule_wrap(function() M.render() end))
 	end)
+
+	-- Re-render sidebar when switching buffers to update current file highlight
+	vim.api.nvim_create_autocmd("BufEnter", {
+		group = augroup,
+		callback = function()
+			if is_open() then
+				vim.schedule(function() M.render() end)
+			end
+		end,
+	})
 end
 
 return M

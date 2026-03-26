@@ -114,38 +114,22 @@ function M.find_latest_jsonl(cwd)
 		return jsonl_dir_cache.path
 	end
 
-	local handle = vim.uv.fs_scandir(projects_dir)
-	if not handle then return nil end
+	-- Derive the project directory name from cwd (Claude Code uses cwd with / replaced by -)
+	local dir_name = cwd:gsub("/", "-")
+	local dir_path = projects_dir .. "/" .. dir_name
 
 	local best_path, best_mtime = nil, 0
-	while true do
-		local name, typ = vim.uv.fs_scandir_next(handle)
-		if not name then break end
-		if typ == "directory" then
-			local dir_path = projects_dir .. "/" .. name
-			local dir_handle = vim.uv.fs_scandir(dir_path)
-			if dir_handle then
-				while true do
-					local fname, ftyp = vim.uv.fs_scandir_next(dir_handle)
-					if not fname then break end
-					if ftyp == "file" and fname:match("%.jsonl$") then
-						local fpath = dir_path .. "/" .. fname
-						local stat = vim.uv.fs_stat(fpath)
-						if stat and stat.mtime.sec > best_mtime then
-							local fd = vim.uv.fs_open(fpath, "r", 438)
-							if fd then
-								local chunk = vim.uv.fs_read(fd, 4096, 0)
-								vim.uv.fs_close(fd)
-								if chunk then
-									local line = chunk:match("^[^\n]+")
-									if line and line:find(cwd, 1, true) then
-										best_path = fpath
-										best_mtime = stat.mtime.sec
-									end
-								end
-							end
-						end
-					end
+	local dir_handle = vim.uv.fs_scandir(dir_path)
+	if dir_handle then
+		while true do
+			local fname, ftyp = vim.uv.fs_scandir_next(dir_handle)
+			if not fname then break end
+			if ftyp == "file" and fname:match("%.jsonl$") then
+				local fpath = dir_path .. "/" .. fname
+				local stat = vim.uv.fs_stat(fpath)
+				if stat and stat.mtime.sec > best_mtime then
+					best_path = fpath
+					best_mtime = stat.mtime.sec
 				end
 			end
 		end

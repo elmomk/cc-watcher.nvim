@@ -11,6 +11,7 @@ local defaults = {
 	integrations = {
 		telescope = false,
 		fzf_lua = false,
+		snacks = false,
 		trouble = false,
 		diffview = false,
 	},

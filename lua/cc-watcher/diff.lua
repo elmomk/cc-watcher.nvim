@@ -26,20 +26,43 @@ local function relpath(filepath)
 	return filepath
 end
 
+--- Get the file path relative to its git repo root (handles worktrees)
+local function git_relpath(filepath)
+	local dir = vim.fn.fnamemodify(filepath, ":h")
+	local root = vim.fn.systemlist("git -C " .. vim.fn.shellescape(dir) .. " rev-parse --show-toplevel 2>/dev/null")
+	if vim.v.shell_error == 0 and root[1] then
+		local git_root = root[1]
+		if filepath:sub(1, #git_root) == git_root then
+			return filepath:sub(#git_root + 2), dir
+		end
+	end
+	return relpath(filepath), dir
+end
+
+local function git_show_head(filepath)
+	local rel, dir = git_relpath(filepath)
+	return vim.fn.systemlist("git -C " .. vim.fn.shellescape(dir) .. " show HEAD:" .. vim.fn.shellescape(rel) .. " 2>/dev/null")
+end
+
 local function get_before_lines(filepath)
+	-- Always prefer git HEAD — snapshots are taken on BufReadPost which is
+	-- after Claude has already edited the file, so they contain post-edit content.
+	local lines = git_show_head(filepath)
+	if vim.v.shell_error == 0 and #lines > 0 then return lines end
+
 	local snap = snapshots.get(filepath)
 	if snap then return snap.lines end
-	local rel = relpath(filepath)
-	local lines = vim.fn.systemlist("git show HEAD:" .. vim.fn.shellescape(rel) .. " 2>/dev/null")
-	if vim.v.shell_error == 0 and #lines > 0 then return lines end
 	return nil
 end
 
 local function get_before_raw(filepath)
+	local lines = git_show_head(filepath)
+	if vim.v.shell_error == 0 and #lines > 0 then
+		return table.concat(lines, "\n") .. "\n"
+	end
+
 	local snap = snapshots.get(filepath)
 	if snap then return snap.raw end
-	local bl = get_before_lines(filepath)
-	if bl then return table.concat(bl, "\n") .. "\n" end
 	return nil
 end
 
@@ -279,14 +302,10 @@ function M.show(filepath)
 		vim.notify("No hunk under cursor", vim.log.levels.INFO)
 	end, { buffer = bufnr, silent = true, desc = "Revert Claude hunk" })
 
-	-- Jump + flash if first change is off-screen
+	-- Always jump to first change
 	if first_change then
-		local win_top = vim.fn.line("w0")
-		local win_bot = vim.fn.line("w$")
-		if first_change < win_top or first_change > win_bot then
-			pcall(vim.api.nvim_win_set_cursor, 0, { first_change, 0 })
-			vim.cmd("normal! zz")
-		end
+		pcall(vim.api.nvim_win_set_cursor, 0, { first_change, 0 })
+		vim.cmd("normal! zz")
 		flash_line(bufnr, first_change)
 	end
 
