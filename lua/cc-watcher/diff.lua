@@ -37,9 +37,12 @@ local function get_before_lines(filepath, current_raw)
 		end
 	end
 	-- Fall through to git
-	local git_rel = util.git_relpath(filepath)
+	local git_rel, git_dir = util.git_relpath(filepath)
 	if not git_rel then return nil end
-	local lines = vim.fn.systemlist("git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
+	local cmd = git_dir
+		and ("git -C " .. vim.fn.shellescape(git_dir) .. " show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
+		or ("git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
+	local lines = vim.fn.systemlist(cmd)
 	if vim.v.shell_error == 0 and #lines > 0 then return lines end
 	return nil
 end
@@ -53,9 +56,12 @@ local function get_before_raw(filepath, current_raw)
 		end
 	end
 	-- Fall through to git
-	local git_rel = util.git_relpath(filepath)
+	local git_rel, git_dir = util.git_relpath(filepath)
 	if not git_rel then return nil end
-	local lines = vim.fn.systemlist("git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
+	local cmd = git_dir
+		and ("git -C " .. vim.fn.shellescape(git_dir) .. " show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
+		or ("git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
+	local lines = vim.fn.systemlist(cmd)
 	if vim.v.shell_error == 0 and #lines > 0 then return table.concat(lines, "\n") .. "\n" end
 	return nil
 end
@@ -300,14 +306,10 @@ function M.show(filepath)
 		vim.notify("No hunk under cursor", vim.log.levels.INFO)
 	end, { buffer = bufnr, silent = true, desc = "Revert Claude hunk" })
 
-	-- Jump + flash if first change is off-screen
+	-- Always jump to first change
 	if first_change then
-		local win_top = vim.fn.line("w0")
-		local win_bot = vim.fn.line("w$")
-		if first_change < win_top or first_change > win_bot then
-			pcall(vim.api.nvim_win_set_cursor, 0, { first_change, 0 })
-			vim.cmd("normal! zz")
-		end
+		pcall(vim.api.nvim_win_set_cursor, 0, { first_change, 0 })
+		vim.cmd("normal! zz")
 		flash_line(bufnr, first_change)
 	end
 

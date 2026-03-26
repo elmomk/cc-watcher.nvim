@@ -344,19 +344,9 @@ function M.open()
 		require("cc-watcher.diff").show(f.abs)
 	end
 
-	local function open_plain()
-		local f = file_at_cursor()
-		if not f then return end
-		if vim.fn.winnr("$") <= 1 then
-			vim.cmd("wincmd v")
-		end
-		vim.cmd("wincmd p")
-		vim.cmd("edit " .. vim.fn.fnameescape(f.abs))
-	end
-
 	vim.keymap.set("n", "<CR>", open_with_diff, opts)
 	vim.keymap.set("n", "d", open_with_diff, opts)
-	vim.keymap.set("n", "o", open_plain, opts)
+	vim.keymap.set("n", "o", open_with_diff, opts)
 	vim.keymap.set("n", "r", function() M.render() end, opts)
 	vim.keymap.set("n", "q", function() M.close() end, opts)
 	vim.keymap.set("n", "g?", show_help, opts)
@@ -411,6 +401,16 @@ function M.setup()
 		jsonl_debounce:stop()
 		jsonl_debounce:start(300, 0, vim.schedule_wrap(function() M.render() end))
 	end)
+
+	-- Re-render sidebar when switching buffers to update current file highlight
+	vim.api.nvim_create_autocmd("BufEnter", {
+		group = augroup,
+		callback = function()
+			if is_open() then
+				vim.schedule(function() M.render() end)
+			end
+		end,
+	})
 end
 
 return M

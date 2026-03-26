@@ -12,19 +12,24 @@ M.FILE_MODE = 384 -- octal 0600: rw for owner only
 function M.relpath(filepath, cwd)
 	cwd = cwd or vim.fn.getcwd()
 	if filepath:sub(1, #cwd) == cwd then return filepath:sub(#cwd + 2) end
+	-- Fallback: try git root for worktree paths
+	local git_rel = M.git_relpath(filepath)
+	if git_rel then return git_rel end
 	return filepath
 end
 
 --- Get path relative to git repo root (works in worktrees)
 ---@param filepath string absolute path
 ---@return string|nil relative path from git root
+---@return string|nil directory used for git commands
 function M.git_relpath(filepath)
-	local toplevel = vim.fn.systemlist("git rev-parse --show-toplevel 2>/dev/null")[1]
-	if vim.v.shell_error ~= 0 or not toplevel or toplevel == "" then return nil end
+	local dir = vim.fn.fnamemodify(filepath, ":h")
+	local toplevel = vim.fn.systemlist("git -C " .. vim.fn.shellescape(dir) .. " rev-parse --show-toplevel 2>/dev/null")[1]
+	if vim.v.shell_error ~= 0 or not toplevel or toplevel == "" then return nil, nil end
 	if filepath:sub(1, #toplevel) == toplevel then
-		return filepath:sub(#toplevel + 2)
+		return filepath:sub(#toplevel + 2), dir
 	end
-	return nil
+	return nil, nil
 end
 
 --- Read file contents from disk via libuv
@@ -60,10 +65,12 @@ function M.get_old_text(filepath, cwd, current_text)
 		-- Snapshot matches current — fall through to git HEAD
 	end
 
-	local git_rel = M.git_relpath(filepath)
+	local git_rel, git_dir = M.git_relpath(filepath)
 	if not git_rel or git_rel:find("%.%./") then return "" end
 
-	local lines = vim.fn.systemlist("git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
+	local cmd = "git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null"
+	if git_dir then cmd = "git -C " .. vim.fn.shellescape(git_dir) .. " show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null" end
+	local lines = vim.fn.systemlist(cmd)
 	if vim.v.shell_error == 0 and #lines > 0 then
 		return table.concat(lines, "\n") .. "\n"
 	end

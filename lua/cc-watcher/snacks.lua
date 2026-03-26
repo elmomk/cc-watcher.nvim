@@ -49,6 +49,7 @@ function M.changed_files()
 					return ret
 				end,
 				preview = function(ctx)
+					require("cc-watcher.highlights").setup()
 					local item = ctx.item
 					local old_text = util.get_old_text(item.file, item.cwd)
 					local new_text = util.read_file(item.file) or ""
@@ -56,7 +57,22 @@ function M.changed_files()
 					if unified and unified ~= "" then
 						local lines = vim.split(unified, "\n", { plain = true })
 						vim.api.nvim_buf_set_lines(ctx.buf, 0, -1, false, lines)
-						vim.bo[ctx.buf].filetype = "diff"
+						local ns = vim.api.nvim_create_namespace("cc_watcher_diff")
+						for i, line in ipairs(lines) do
+							local hl = nil
+							if line:match("^%+") and not line:match("^%+%+%+") then
+								hl = "ClaudeDiffAdd"
+							elseif line:match("^%-") and not line:match("^%-%-%-") then
+								hl = "ClaudeDiffDelete"
+							elseif line:match("^@@") then
+								hl = "ClaudeDiffChange"
+							end
+							if hl then
+								pcall(vim.api.nvim_buf_set_extmark, ctx.buf, ns, i - 1, 0, {
+									line_hl_group = hl,
+								})
+							end
+						end
 					else
 						vim.api.nvim_buf_set_lines(ctx.buf, 0, -1, false, { "No changes" })
 					end
