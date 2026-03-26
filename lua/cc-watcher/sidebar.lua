@@ -16,6 +16,7 @@ local HEADER_LINES = 3 -- title, status, separator
 local displayed_files = {}
 local line_to_file = {} -- line number -> file entry, rebuilt each render
 local ns = vim.api.nvim_create_namespace("claude_sidebar")
+local augroup = vim.api.nvim_create_augroup("ClaudeSidebar", { clear = true })
 
 -- Reusable timers (avoids handle leaks)
 local debounce_timer = vim.uv.new_timer()
@@ -83,7 +84,7 @@ local function file_stats(filepath)
 	-- No buffer — compute from disk using git HEAD as baseline
 	local old_text = util.get_old_text(filepath)
 	local new_text = util.read_file(filepath) or ""
-	if old_text ~= "" and new_text ~= "" then
+	if new_text ~= "" then
 		local hunks = util.compute_hunks(old_text, new_text)
 		if hunks then
 			local add, del = util.hunk_stats(hunks)
@@ -270,8 +271,7 @@ local function show_help()
 		"│  cc-watcher.nvim               │",
 		"│                                │",
 		"│  Sidebar:                      │",
-		"│    <CR>/d  Open file with diff │",
-		"│    o       Open file           │",
+		"│    <CR>/d/o Open file with diff │",
 		"│    r       Refresh             │",
 		"│    q       Close sidebar       │",
 		"│    g?      Toggle help         │",

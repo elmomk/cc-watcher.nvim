@@ -31,7 +31,7 @@ end
 local function get_before_lines(filepath, current_raw)
 	-- Always prefer git HEAD — snapshots are taken on BufReadPost (post-edit)
 	local git_rel, git_dir = util.git_relpath(filepath)
-	if git_rel then
+	if git_rel and not git_rel:find("%.%./") then
 		local cmd = git_dir
 			and ("git -C " .. vim.fn.shellescape(git_dir) .. " show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
 			or ("git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
@@ -49,7 +49,7 @@ end
 local function get_before_raw(filepath, current_raw)
 	-- Always prefer git HEAD — snapshots are taken on BufReadPost (post-edit)
 	local git_rel, git_dir = util.git_relpath(filepath)
-	if git_rel then
+	if git_rel and not git_rel:find("%.%./") then
 		local cmd = git_dir
 			and ("git -C " .. vim.fn.shellescape(git_dir) .. " show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
 			or ("git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")

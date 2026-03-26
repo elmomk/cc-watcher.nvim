@@ -11,7 +11,7 @@ M.FILE_MODE = 384 -- octal 0600: rw for owner only
 ---@return string
 function M.relpath(filepath, cwd)
 	cwd = cwd or vim.fn.getcwd()
-	if filepath:sub(1, #cwd) == cwd then return filepath:sub(#cwd + 2) end
+	if filepath:sub(1, #cwd + 1) == cwd .. "/" then return filepath:sub(#cwd + 2) end
 	-- Fallback: try git root for worktree paths
 	local git_rel = M.git_relpath(filepath)
 	if git_rel then return git_rel end
@@ -26,7 +26,7 @@ function M.git_relpath(filepath)
 	local dir = vim.fn.fnamemodify(filepath, ":h")
 	local toplevel = vim.fn.systemlist("git -C " .. vim.fn.shellescape(dir) .. " rev-parse --show-toplevel 2>/dev/null")[1]
 	if vim.v.shell_error ~= 0 or not toplevel or toplevel == "" then return nil, nil end
-	if filepath:sub(1, #toplevel) == toplevel then
+	if filepath:sub(1, #toplevel + 1) == toplevel .. "/" then
 		return filepath:sub(#toplevel + 2), dir
 	end
 	return nil, nil

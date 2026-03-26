@@ -24,7 +24,7 @@ function M.setup()
 	hl("ClaudeSession",  { link = "DiagnosticInfo" })
 	hl("ClaudeDir",      { link = "Directory" })
 	hl("ClaudeFile",        { link = "Normal" })
-	hl("ClaudeFileCurrent", { link = "CursorLine" })
+	hl("ClaudeFileCurrent", { bold = true, underline = true, link = "Normal" })
 	hl("ClaudeHelp",     { link = "Comment" })
 	hl("ClaudeStats",    { link = "Comment" })
 
