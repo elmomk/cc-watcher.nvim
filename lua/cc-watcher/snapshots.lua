@@ -9,8 +9,6 @@ local MAX_FILE_SIZE = 10 * 1024 * 1024 -- 10 MB
 local MAX_SNAPSHOTS = 100
 local generation = 0
 
-local SPLIT_OPTS = { plain = true }
-
 local function touch(filepath)
 	generation = generation + 1
 	if store[filepath] then
@@ -31,7 +29,7 @@ end
 
 ---@param filepath string absolute path
 function M.take(filepath)
-	local fd = vim.uv.fs_open(filepath, "r", 438)
+	local fd = vim.uv.fs_open(filepath, "r", require("cc-watcher.util").READ_MODE)
 	if not fd then return end
 	local stat = vim.uv.fs_fstat(fd)
 	if not stat or stat.size > MAX_FILE_SIZE then
@@ -45,7 +43,6 @@ function M.take(filepath)
 		local is_new = store[filepath] == nil
 		generation = generation + 1
 		store[filepath] = {
-			lines = vim.split(data, "\n", SPLIT_OPTS),
 			raw = data,
 			mtime = stat.mtime.sec,
 			_gen = generation,
@@ -55,7 +52,7 @@ function M.take(filepath)
 	end
 end
 
----@return { lines: string[], raw: string, mtime: number }|nil
+---@return { raw: string, mtime: number }|nil
 function M.get(filepath)
 	local snap = store[filepath]
 	if snap then touch(filepath) end

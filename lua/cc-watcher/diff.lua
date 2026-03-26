@@ -27,12 +27,8 @@ function M.setup()
 	})
 end
 
-local function get_before_text(filepath, current_raw)
-	return util.get_old_text(filepath, nil, current_raw)
-end
-
 local function get_before_lines(filepath, current_raw)
-	local raw = get_before_text(filepath, current_raw)
+	local raw = util.get_old_text(filepath, nil, current_raw)
 	if raw == "" then return nil end
 	return vim.split(raw, "\n", { plain = true })
 end
@@ -40,7 +36,7 @@ end
 local function compute_hunks(filepath, bufnr)
 	local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local new_text = table.concat(current_lines, "\n") .. "\n"
-	local old_text = get_before_text(filepath, new_text)
+	local old_text = util.get_old_text(filepath, nil, new_text)
 	if old_text == "" then return nil end
 	return util.compute_hunks(old_text, new_text)
 end

@@ -17,9 +17,9 @@ T["snapshots"]["take() captures file contents"] = function()
 
 	MiniTest.expect.equality(snapshots.has(tmp), true)
 	local snap = snapshots.get(tmp)
-	MiniTest.expect.equality(snap.lines[1], "hello")
-	MiniTest.expect.equality(snap.lines[2], "world")
 	MiniTest.expect.equality(type(snap.raw), "string")
+	MiniTest.expect.equality(snap.raw:find("hello", 1, true) ~= nil, true)
+	MiniTest.expect.equality(snap.raw:find("world", 1, true) ~= nil, true)
 	MiniTest.expect.equality(type(snap.mtime), "number")
 
 	vim.fn.delete(tmp)

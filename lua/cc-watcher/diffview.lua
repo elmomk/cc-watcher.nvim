@@ -4,7 +4,7 @@
 
 local M = {}
 
-local relpath = require("cc-watcher.util").relpath
+local util = require("cc-watcher.util")
 
 -- Track state for the diff tab so we can close it cleanly
 local state = {
@@ -12,21 +12,28 @@ local state = {
 	bufs = {},  -- scratch buffers we created
 }
 
-
---- Collect all files Claude has changed (watcher + session)
----@param callback fun(files: { abs: string, rel: string }[])
-local function collect_changed_files(callback)
-	require("cc-watcher.util").collect_files(function(files, cwd)
-		callback(files)
-	end)
+--- Create a scratch buffer with given lines, filetype, and name
+---@param lines string[] buffer content
+---@param filepath string used for filetype detection
+---@param name string buffer name
+---@return number bufnr
+local function create_scratch_buf(lines, filepath, name)
+	local buf = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+	vim.bo[buf].buftype = "nofile"
+	vim.bo[buf].bufhidden = "wipe"
+	vim.bo[buf].swapfile = false
+	vim.bo[buf].modifiable = false
+	local ft = vim.filetype.match({ filename = filepath })
+	if ft then vim.bo[buf].filetype = ft end
+	pcall(vim.api.nvim_buf_set_name, buf, name)
+	return buf
 end
 
 --- Create a readonly scratch buffer with pre-edit content (git HEAD or snapshot fallback)
 ---@param filepath string absolute path
 ---@return number|nil bufnr
 local function create_before_buf(filepath)
-	local util = require("cc-watcher.util")
-
 	-- Get pre-edit content: git HEAD first, snapshot fallback
 	local old_text = util.get_old_text(filepath)
 	if old_text == "" then return nil end
@@ -37,23 +44,8 @@ local function create_before_buf(filepath)
 		table.remove(lines)
 	end
 
-	local buf = vim.api.nvim_create_buf(false, true)
-	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-
-	vim.bo[buf].buftype = "nofile"
-	vim.bo[buf].bufhidden = "wipe"
-	vim.bo[buf].swapfile = false
-	vim.bo[buf].modifiable = false
-
-	-- Set filetype for syntax highlighting
-	local ft = vim.filetype.match({ filename = filepath })
-	if ft then vim.bo[buf].filetype = ft end
-
-	-- Give it a meaningful name
-	local rel = relpath(filepath)
-	pcall(vim.api.nvim_buf_set_name, buf, "claude://" .. rel .. " (before)")
-
-	return buf
+	local rel = util.relpath(filepath)
+	return create_scratch_buf(lines, filepath, "claude://" .. rel .. " (before)")
 end
 
 --- Open a side-by-side diff for a file at a specific commit
@@ -61,31 +53,22 @@ end
 ---@param filepath string absolute path
 function M.open_commit_file(commit, filepath)
 	filepath = vim.fn.fnamemodify(filepath, ":p")
-	local rel = relpath(filepath)
-	local git_rel = require("cc-watcher.util").git_relpath(filepath)
+	local rel = util.relpath(filepath)
+	local git_rel = util.git_relpath(filepath)
 	if not git_rel then git_rel = rel end
 
+	local safe_commit = vim.fn.shellescape(commit)
+	local safe_git_rel = vim.fn.shellescape(git_rel)
+
 	-- Get "before" (commit~1) and "after" (commit) versions
-	local before = vim.fn.systemlist("git show " .. commit .. "~1:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
-	local after = vim.fn.systemlist("git show " .. commit .. ":" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
+	local before = vim.fn.systemlist("git show " .. safe_commit .. "~1:" .. safe_git_rel .. " 2>/dev/null")
+	local before_ok = vim.v.shell_error == 0
+	local after = vim.fn.systemlist("git show " .. safe_commit .. ":" .. safe_git_rel .. " 2>/dev/null")
+	local after_ok = vim.v.shell_error == 0
 
 	-- Create scratch buffers
-	local before_buf = vim.api.nvim_create_buf(false, true)
-	vim.api.nvim_buf_set_lines(before_buf, 0, -1, false, vim.v.shell_error == 0 and before or {})
-	vim.bo[before_buf].buftype = "nofile"
-	vim.bo[before_buf].bufhidden = "wipe"
-	vim.bo[before_buf].modifiable = false
-	local ft = vim.filetype.match({ filename = filepath })
-	if ft then vim.bo[before_buf].filetype = ft end
-	pcall(vim.api.nvim_buf_set_name, before_buf, "claude://" .. rel .. " (" .. commit .. "~1)")
-
-	local after_buf = vim.api.nvim_create_buf(false, true)
-	vim.api.nvim_buf_set_lines(after_buf, 0, -1, false, after or {})
-	vim.bo[after_buf].buftype = "nofile"
-	vim.bo[after_buf].bufhidden = "wipe"
-	vim.bo[after_buf].modifiable = false
-	if ft then vim.bo[after_buf].filetype = ft end
-	pcall(vim.api.nvim_buf_set_name, after_buf, "claude://" .. rel .. " (" .. commit .. ")")
+	local before_buf = create_scratch_buf(before_ok and before or {}, filepath, "claude://" .. rel .. " (" .. commit .. "~1)")
+	local after_buf = create_scratch_buf(after_ok and after or {}, filepath, "claude://" .. rel .. " (" .. commit .. ")")
 
 	-- Open in tab with diff
 	vim.cmd("tabnew")
@@ -111,13 +94,13 @@ function M.open_file(filepath)
 	-- Check file exists on disk
 	local stat = vim.uv.fs_stat(filepath)
 	if not stat then
-		vim.notify("File not found: " .. relpath(filepath), vim.log.levels.WARN)
+		vim.notify("File not found: " .. util.relpath(filepath), vim.log.levels.WARN)
 		return
 	end
 
 	local before_buf = create_before_buf(filepath)
 	if not before_buf then
-		vim.notify("No git history for " .. relpath(filepath), vim.log.levels.WARN)
+		vim.notify("No git history for " .. util.relpath(filepath), vim.log.levels.WARN)
 		return
 	end
 
@@ -152,7 +135,7 @@ end
 --- Each file pair is stacked: snapshot (left) vs current (right)
 --- Navigate between files with ]f / [f
 function M.open()
-	collect_changed_files(function(files)
+	util.collect_files(function(files)
 		vim.schedule(function()
 			if #files == 0 then
 				vim.notify("No Claude changes to diff", vim.log.levels.INFO)
@@ -249,13 +232,7 @@ function M.close()
 	if not state.tabpage then return end
 
 	-- Check if the tabpage is still valid
-	local valid = false
-	for _, tp in ipairs(vim.api.nvim_list_tabpages()) do
-		if tp == state.tabpage then
-			valid = true
-			break
-		end
-	end
+	local valid = pcall(vim.api.nvim_tabpage_get_number, state.tabpage)
 
 	if valid then
 		-- Turn off diff mode in all windows of the tab
@@ -298,7 +275,6 @@ function M.close()
 
 	state.tabpage = nil
 	state.bufs = {}
-	keymapped_bufs = {}
 end
 
 return M

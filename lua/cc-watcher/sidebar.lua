@@ -18,11 +18,16 @@ local line_to_file = {} -- line number -> file entry, rebuilt each render
 local latest_changed_file = nil -- abs path of most recently changed file
 
 -- History state
-local history_commits = {} -- { { hash, short, subject, files = { rel, ... } }, ... }
+local history_commits = {} -- { { hash, subject, files = { rel, ... } }, ... }
 local history_idx = 0 -- 0 = current/uncommitted, 1+ = index into history_commits
 local history_loaded = false
 local ns = vim.api.nvim_create_namespace("claude_sidebar")
 local augroup = vim.api.nvim_create_augroup("ClaudeSidebar", { clear = true })
+
+-- Debounce intervals (ms)
+local DEBOUNCE_NOTIFY = 500
+local DEBOUNCE_JSONL = 300
+local DEBOUNCE_BUFENTER = 150
 
 -- Reusable timers (avoids handle leaks)
 local debounce_timer = vim.uv.new_timer()
@@ -154,6 +159,7 @@ local function load_history(session_files)
 	for _, line in ipairs(log) do
 		local hash, subject = line:match("^'?([a-f0-9]+)|(.+)'?$")
 		if hash then
+			subject = subject:gsub("[%c]", "")
 			current = { hash = hash, subject = subject, files = {} }
 			commits[#commits + 1] = current
 		elseif current and line ~= "" then
@@ -177,7 +183,8 @@ end
 --- Get files and stats for a historical commit
 local function commit_files(commit_hash)
 	local cwd = vim.uv.cwd()
-	local lines = vim.fn.systemlist("git diff-tree --no-commit-id --name-only -r " .. commit_hash .. " 2>/dev/null")
+	local safe_hash = vim.fn.shellescape(commit_hash)
+	local lines = vim.fn.systemlist("git diff-tree --no-commit-id --name-only -r " .. safe_hash .. " 2>/dev/null")
 	if vim.v.shell_error ~= 0 then return {} end
 
 	local files = {}
@@ -190,17 +197,27 @@ local function commit_files(commit_hash)
 	return files
 end
 
---- Compute stats for a file in a historical commit
+--- Compute stats for a file in a historical commit (cached per commit)
+local commit_stats_cache = {} -- hash -> { rel -> { add, del, stats } }
+
 local function commit_file_stats(commit_hash, rel)
-	local output = vim.fn.systemlist("git diff " .. commit_hash .. "~1.." .. commit_hash .. " --numstat -- " .. vim.fn.shellescape(rel) .. " 2>/dev/null")
-	if vim.v.shell_error ~= 0 or #output == 0 then return 0, 0, "" end
-	local add, del = output[1]:match("^(%d+)%s+(%d+)")
-	if add and del then
-		add, del = tonumber(add), tonumber(del)
-		if add > 0 or del > 0 then
-			return add, del, "+" .. add .. " -" .. del
+	if not commit_stats_cache[commit_hash] then
+		-- Batch: get all numstats for this commit at once
+		local safe_hash = vim.fn.shellescape(commit_hash)
+		local output = vim.fn.systemlist("git diff " .. safe_hash .. "~1.." .. safe_hash .. " --numstat 2>/dev/null")
+		local cache = {}
+		for _, line in ipairs(output) do
+			local a, d, f = line:match("^(%d+)%s+(%d+)%s+(.+)$")
+			if a and d and f then
+				a, d = tonumber(a), tonumber(d)
+				local s = (a > 0 or d > 0) and ("+" .. a .. " -" .. d) or ""
+				cache[f] = { a, d, s }
+			end
 		end
+		commit_stats_cache[commit_hash] = cache
 	end
+	local entry = commit_stats_cache[commit_hash][rel]
+	if entry then return entry[1], entry[2], entry[3] end
 	return 0, 0, ""
 end
 
@@ -347,9 +364,9 @@ local function do_render(session_files)
 				current_file_row = #lines
 			elseif is_latest then
 				hls[#hls + 1] = { cur_ln, "ClaudeFileLatest", 0, -1 }
+			else
+				hls[#hls + 1] = { cur_ln, "ClaudeFile", #prefix, #prefix + #file.rel }
 			end
-			local file_hl = is_current and "ClaudeFileCurrent" or (is_latest and "ClaudeFileLatest" or "ClaudeFile")
-			hls[#hls + 1] = { cur_ln, file_hl, #prefix, #prefix + #file.rel }
 			-- Stats
 			if stats ~= "" then
 				hls[#hls + 1] = { cur_ln, "ClaudeStats", #line - #stats, -1 }
@@ -542,11 +559,8 @@ function M.open()
 		end
 	end, opts)
 	vim.keymap.set("n", "[g", function()
-		if history_idx > 1 then
+		if history_idx > 0 then
 			history_idx = history_idx - 1
-			M.render()
-		elseif history_idx == 1 then
-			history_idx = 0
 			M.render()
 		end
 	end, opts)
@@ -582,7 +596,7 @@ function M.setup()
 		latest_changed_file = filepath
 		pending_changes[#pending_changes + 1] = rel
 		debounce_timer:stop()
-		debounce_timer:start(500, 0, vim.schedule_wrap(flush_notifications))
+		debounce_timer:start(DEBOUNCE_NOTIFY, 0, vim.schedule_wrap(flush_notifications))
 
 		if is_open() then M.render() end
 
@@ -600,7 +614,7 @@ function M.setup()
 		latest_changed_file = nil
 		if not is_open() then return end
 		jsonl_debounce:stop()
-		jsonl_debounce:start(300, 0, vim.schedule_wrap(function() M.render() end))
+		jsonl_debounce:start(DEBOUNCE_JSONL, 0, vim.schedule_wrap(function() M.render() end))
 	end)
 
 	-- Re-render sidebar when switching buffers to update current file highlight
@@ -609,7 +623,7 @@ function M.setup()
 		callback = function()
 			if is_open() then
 				bufenter_debounce:stop()
-				bufenter_debounce:start(150, 0, vim.schedule_wrap(function() M.render() end))
+				bufenter_debounce:start(DEBOUNCE_BUFENTER, 0, vim.schedule_wrap(function() M.render() end))
 			end
 		end,
 	})

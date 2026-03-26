@@ -5,6 +5,8 @@
 
 local M = {}
 
+local MAX_SESSION_FILE_SIZE = 1048576 -- 1 MB
+
 local sessions_dir = vim.fn.expand("~/.claude/sessions")
 local projects_dir = vim.fn.expand("~/.claude/projects")
 
@@ -60,7 +62,7 @@ local function parse_chunk(data, seen, files)
 							and block.input and block.input.file_path then
 							local fp = block.input.file_path
 							-- Reject paths with traversal or outside project
-							if fp and not fp:find("%.%./") and fp:sub(1, 1) == "/" then
+							if fp and fp:find("%.%.") == nil and fp:sub(1, 1) == "/" then
 								if not seen[fp] then
 									seen[fp] = true
 									files[#files + 1] = fp
@@ -96,10 +98,10 @@ function M.find_active_session(cwd)
 		if not name then break end
 		if typ == "file" and name:match("%.json$") then
 			local path = sessions_dir .. "/" .. name
-			local fd = vim.uv.fs_open(path, "r", 438)
+			local fd = vim.uv.fs_open(path, "r", require("cc-watcher.util").READ_MODE)
 			if fd then
 				local stat = vim.uv.fs_fstat(fd)
-				if stat and stat.size < 1048576 then
+				if stat and stat.size < MAX_SESSION_FILE_SIZE then
 					local data = vim.uv.fs_read(fd, stat.size, 0)
 					vim.uv.fs_close(fd)
 					if data then
@@ -198,7 +200,7 @@ local function read_jsonl_incremental(jsonl_path, seen, files)
 	if stat.size == t.offset then return end
 
 	local bytes_to_read = stat.size - t.offset
-	local fd = vim.uv.fs_open(jsonl_path, "r", 438)
+	local fd = vim.uv.fs_open(jsonl_path, "r", require("cc-watcher.util").READ_MODE)
 	if not fd then return end
 
 	local data = vim.uv.fs_read(fd, bytes_to_read, t.offset)
@@ -233,7 +235,7 @@ function M.get_edited_files_async(jsonl_path, callback)
 	if stat.size == t.offset then callback(t.files); return end
 
 	local bytes = stat.size - t.offset
-	local fd = vim.uv.fs_open(jsonl_path, "r", 438)
+	local fd = vim.uv.fs_open(jsonl_path, "r", require("cc-watcher.util").READ_MODE)
 	if not fd then callback(t.files); return end
 	local data = vim.uv.fs_read(fd, bytes, t.offset)
 	vim.uv.fs_close(fd)

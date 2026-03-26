@@ -1,12 +1,5 @@
 -- Enhanced hunk navigation with flash.nvim labels
 local M = {}
-local _done = false
-
-function M.setup()
-	if _done then return end
-	_done = true
-	-- flash is loaded on-demand, no eager init needed
-end
 
 --- Jump to any Claude hunk using flash labels
 function M.jump()

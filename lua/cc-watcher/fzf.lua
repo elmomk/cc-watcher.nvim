@@ -92,7 +92,7 @@ function M.changed_files()
 			local entries = {}
 			for _, f in ipairs(files) do
 				local indicator = f.live and "\xe2\x97\x8f" or "\xe2\x97\x8b" -- ● / ○
-				local old_text = util.get_old_text(f.abs)
+				local old_text = util.get_old_text(f.abs, cwd)
 				local new_text = util.read_file(f.abs) or ""
 				local hunks = util.compute_hunks(old_text, new_text)
 				local add, del = 0, 0
@@ -145,7 +145,7 @@ function M.hunks()
 			local hunk_map = {} -- entry string -> { filepath, line }
 
 			for _, f in ipairs(files) do
-				local old_text = util.get_old_text(f.abs)
+				local old_text = util.get_old_text(f.abs, cwd)
 				local new_text = util.read_file(f.abs) or ""
 				local hunks = util.compute_hunks(old_text, new_text)
 				if hunks then

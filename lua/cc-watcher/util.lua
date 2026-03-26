@@ -4,6 +4,7 @@
 local M = {}
 
 M.FILE_MODE = 384 -- octal 0600: rw for owner only
+M.READ_MODE = 438 -- octal 0666: rw for all (used for fs_open read)
 
 local git_toplevel_cache = {} -- dir -> toplevel string or false
 local git_show_cache = {} -- git_rel -> string
@@ -12,6 +13,10 @@ local git_show_cache = {} -- git_rel -> string
 function M.invalidate_git_cache()
 	git_show_cache = {}
 end
+
+vim.api.nvim_create_autocmd("FocusGained", {
+	callback = function() git_show_cache = {} end,
+})
 
 --- Compute relative path from cwd
 ---@param filepath string absolute path
@@ -74,7 +79,7 @@ function M.get_old_text(filepath, cwd, current_text)
 	-- Always prefer git HEAD — snapshots are taken on BufReadPost which is
 	-- typically after Claude has already edited the file (post-edit content).
 	local git_rel, git_dir = M.git_relpath(filepath)
-	if git_rel and not git_rel:find("%.%./") then
+	if git_rel and git_rel:find("%.%.") == nil then
 		local cached = git_show_cache[git_rel]
 		if cached then return cached end
 		local cmd = "git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null"

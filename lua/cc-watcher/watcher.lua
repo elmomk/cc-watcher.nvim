@@ -74,7 +74,7 @@ local function watch_file(filepath)
 		if not snap then return end
 
 		-- Use fstat on open fd to avoid TOCTOU
-		local fd = vim.uv.fs_open(filepath, "r", 438)
+		local fd = vim.uv.fs_open(filepath, "r", require("cc-watcher.util").READ_MODE)
 		if not fd then return end
 		local stat = vim.uv.fs_fstat(fd)
 		if not stat then vim.uv.fs_close(fd); return end

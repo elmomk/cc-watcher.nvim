@@ -18,11 +18,10 @@ function M.setup()
 	end)
 
 	-- Register a custom component for neo-tree that shows Claude indicators
-	local ok2, cc_component = pcall(require, "neo-tree.sources.common.components")
+	local ok2 = pcall(require, "neo-tree.sources.common.components")
 	if ok2 then
 		-- Add claude_indicator to available components
 		local watcher = require("cc-watcher.watcher")
-		local renderer = require("neo-tree.ui.renderer")
 
 		-- Users can add this to their neo-tree config:
 		-- components = { claude_indicator = function(config, node) ... end }
