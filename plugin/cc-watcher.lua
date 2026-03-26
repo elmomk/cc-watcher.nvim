@@ -71,13 +71,12 @@ vim.api.nvim_create_user_command("ClaudeTrouble", function()
 		vim.notify("cc-watcher: trouble integration is disabled. Enable it with integrations.trouble = true", vim.log.levels.WARN)
 		return
 	end
-	local ok, trouble_mod = pcall(require, "cc-watcher.trouble")
+	local ok, trouble = pcall(require, "trouble")
 	if not ok then
 		vim.notify("cc-watcher: trouble.nvim not found", vim.log.levels.ERROR)
 		return
 	end
-	trouble_mod.setup()
-	trouble_mod.open()
+	trouble.open({ mode = "claude" })
 end, {
 	desc = "Trouble: Claude Code changes",
 })

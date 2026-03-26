@@ -159,7 +159,6 @@ function M.show(filepath, opts)
 
 	if active_diffs[bufnr] then
 		clear(bufnr)
-		M.apply_signs(bufnr, filepath)
 		return
 	end
 
