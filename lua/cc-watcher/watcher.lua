@@ -21,8 +21,6 @@ function M.get_changed_files()
 end
 
 function M.mark_changed(filepath)
-	if changed_files[filepath] then return end
-
 	local cwd = vim.uv.cwd()
 	local relpath = filepath
 	if filepath:sub(1, #cwd) == cwd then

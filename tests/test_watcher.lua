@@ -38,7 +38,7 @@ T["watcher"]["mark_changed() tracks files"] = function()
 	MiniTest.expect.equality(watcher.get_changed_files()["/tmp/test_file.lua"], true)
 end
 
-T["watcher"]["mark_changed() deduplicates"] = function()
+T["watcher"]["mark_changed() fires callback on every change"] = function()
 	local watcher = require("cc-watcher.watcher")
 	local call_count = 0
 
@@ -48,8 +48,8 @@ T["watcher"]["mark_changed() deduplicates"] = function()
 
 	local before = call_count
 	watcher.mark_changed("/tmp/dedup_test.lua")
-	watcher.mark_changed("/tmp/dedup_test.lua") -- should not fire callback again
-	MiniTest.expect.equality(call_count - before, 1)
+	watcher.mark_changed("/tmp/dedup_test.lua") -- should fire callback again (re-edit)
+	MiniTest.expect.equality(call_count - before, 2)
 end
 
 return T
