@@ -577,6 +577,19 @@ function M.toggle()
 	if is_open() then M.close() else M.open() end
 end
 
+--- Debug: show sidebar state
+function M.debug()
+	print("latest_changed_file: " .. tostring(latest_changed_file))
+	print("displayed_files: " .. #displayed_files)
+	print("history_idx: " .. history_idx)
+	for i, f in ipairs(displayed_files) do
+		local st = vim.uv.fs_stat(f.abs)
+		local mtime = st and st.mtime.sec or 0
+		local marker = (f.abs == latest_changed_file) and " <<< LATEST" or ""
+		print(string.format("  %d. %s (mtime=%d)%s", i, f.rel, mtime, marker))
+	end
+end
+
 local function flush_notifications()
 	if #pending_changes == 0 then return end
 	if #pending_changes == 1 then
