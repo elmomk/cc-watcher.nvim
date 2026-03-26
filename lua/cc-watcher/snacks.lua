@@ -56,7 +56,9 @@ function M.changed_files()
 					local unified = util.compute_unified(old_text, new_text)
 					if unified and unified ~= "" then
 						local lines = vim.split(unified, "\n", { plain = true })
+						vim.bo[ctx.buf].modifiable = true
 						vim.api.nvim_buf_set_lines(ctx.buf, 0, -1, false, lines)
+						vim.bo[ctx.buf].modifiable = false
 						local ns = vim.api.nvim_create_namespace("cc_watcher_diff")
 						for i, line in ipairs(lines) do
 							local hl = nil
@@ -74,7 +76,9 @@ function M.changed_files()
 							end
 						end
 					else
+						vim.bo[ctx.buf].modifiable = true
 						vim.api.nvim_buf_set_lines(ctx.buf, 0, -1, false, { "No changes" })
+						vim.bo[ctx.buf].modifiable = false
 					end
 				end,
 				confirm = function(picker, item)
