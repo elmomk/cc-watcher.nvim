@@ -17,6 +17,7 @@ Designed for a **tmux split workflow**: Claude Code on the left, Neovim on the r
 - **Lazy loading** — full lazy.nvim support with command/key/event triggers
 - **Pure Lua** — no external dependencies
 - **Integrations** (opt-in):
+  - [Snacks picker](#snacks-picker) — fuzzy find changed files and hunks with colored diff preview (for [LazyVim](https://www.lazyvim.org/) / snacks.nvim users)
   - [Telescope](#telescope) — fuzzy find changed files and hunks with diff preview
   - [fzf-lua](#fzf-lua) — same pickers for fzf users
   - [trouble.nvim](#troublenvim) — diagnostic-like list of all changes
@@ -67,7 +68,35 @@ Designed for a **tmux split workflow**: Claude Code on the left, Neovim on the r
 }
 ```
 
-With all integrations:
+With snacks picker + all integrations (for LazyVim users):
+
+```lua
+{
+    "elmomk/cc-watcher.nvim",
+    event = { "BufReadPost", "BufNewFile" },
+    cmd = {
+        "ClaudeSidebar", "ClaudeDiff",
+        "ClaudeSnacks", "ClaudeTrouble", "ClaudeDiffview",
+    },
+    keys = {
+        { "<leader>cs", desc = "Claude - toggle sidebar" },
+        { "<leader>cd", desc = "Claude - toggle inline diff" },
+        { "<leader>ct", "<cmd>ClaudeSnacks<cr>", desc = "Claude - changed files" },
+        { "<leader>ch", "<cmd>ClaudeSnacks hunks<cr>", desc = "Claude - hunks" },
+        { "<leader>cx", "<cmd>ClaudeTrouble<cr>", desc = "Claude - trouble" },
+        { "<leader>cv", "<cmd>ClaudeDiffview<cr>", desc = "Claude - diffview" },
+    },
+    opts = {
+        integrations = {
+            snacks = true,
+            trouble = true,
+            diffview = true,
+        },
+    },
+}
+```
+
+With telescope + all integrations:
 
 ```lua
 {
@@ -128,6 +157,7 @@ require("cc-watcher").setup({
 
     -- Opt-in integrations (require the corresponding plugin to be installed)
     integrations = {
+        snacks = false,      -- :ClaudeSnacks (for snacks.nvim / LazyVim users)
         telescope = false,   -- :ClaudeTelescope, :Telescope cc_watcher
         fzf_lua = false,     -- :ClaudeFzf
         trouble = false,     -- :ClaudeTrouble
@@ -178,6 +208,7 @@ require("cc-watcher").setup({
 |---------|-------------|
 | `:ClaudeSidebar` | Toggle the changed files sidebar |
 | `:ClaudeDiff` | Toggle inline diff for current file |
+| `:ClaudeSnacks [changed_files\|hunks]` | Snacks picker for Claude changes |
 | `:ClaudeTelescope [changed_files\|hunks]` | Telescope picker for Claude changes |
 | `:ClaudeFzf [changed_files\|hunks]` | fzf-lua picker for Claude changes |
 | `:ClaudeTrouble` | Open trouble.nvim with Claude changes |
@@ -186,6 +217,18 @@ require("cc-watcher").setup({
 ## Integrations
 
 All integrations are **opt-in** — enable them in your config and install the corresponding plugin.
+
+### Snacks picker
+
+```lua
+opts = { integrations = { snacks = true } }
+```
+
+- `:ClaudeSnacks` — **changed files picker** with colored diff preview (green/red highlights)
+- `:ClaudeSnacks hunks` — **hunk picker** with file preview at hunk location
+- `<CR>` opens file with inline diff and jumps to first change
+
+Requires: [snacks.nvim](https://github.com/folke/snacks.nvim) (included by default in LazyVim)
 
 ### Telescope
 
@@ -238,6 +281,63 @@ opts = { integrations = { diffview = true } }
 
 Uses vim's built-in diff mode — no additional plugin required.
 
+## LazyVim Dashboard Setup
+
+If you use [LazyVim](https://www.lazyvim.org/) with the snacks.nvim dashboard, you can add a "Claude Changes" entry to your startup page.
+
+Create `~/.config/nvim/lua/plugins/dashboard.lua`:
+
+```lua
+return {
+  "snacks.nvim",
+  opts = {
+    dashboard = {
+      preset = {
+        -- stylua: ignore
+        ---@type snacks.dashboard.Item[]
+        keys = {
+          { icon = " ", key = "f", desc = "Find File", action = ":lua Snacks.dashboard.pick('files')" },
+          { icon = " ", key = "n", desc = "New File", action = ":ene | startinsert" },
+          { icon = " ", key = "g", desc = "Find Text", action = ":lua Snacks.dashboard.pick('live_grep')" },
+          { icon = " ", key = "r", desc = "Recent Files", action = ":lua Snacks.dashboard.pick('oldfiles')" },
+          { icon = " ", key = "c", desc = "Config", action = ":lua Snacks.dashboard.pick('files', {cwd = vim.fn.stdpath('config')})" },
+          { icon = " ", key = "s", desc = "Restore Session", section = "session" },
+          { icon = " ", key = "w", desc = "Claude Changes", action = ":enew | ClaudeSnacks" },
+          { icon = " ", key = "x", desc = "Lazy Extras", action = ":LazyExtras" },
+          { icon = "󰒲 ", key = "l", desc = "Lazy", action = ":Lazy" },
+          { icon = " ", key = "q", desc = "Quit", action = ":qa" },
+        },
+      },
+    },
+  },
+}
+```
+
+Pressing `w` on the startup page opens the snacks changed files picker with diff preview, dismissing the dashboard automatically.
+
+### Lualine (LazyVim)
+
+To add the cc-watcher statusline indicator to LazyVim's lualine, create `~/.config/nvim/lua/plugins/lualine.lua`:
+
+```lua
+return {
+  "nvim-lualine/lualine.nvim",
+  opts = function(_, opts)
+    table.insert(opts.sections.lualine_x, 1, {
+      function()
+        return require("cc-watcher").statusline()
+      end,
+      cond = function()
+        local ok, watcher = pcall(require, "cc-watcher.watcher")
+        return ok and vim.tbl_count(watcher.get_changed_files()) > 0
+      end,
+    })
+  end,
+}
+```
+
+This shows `󰚩 N` in the statusline when Claude has changed files.
+
 ## Statusline
 
 ```lua
@@ -270,10 +370,11 @@ Returns `""` when no changes, or `"󰚩 N"` where N is the count of changed file
 - [Claude Code](https://claude.ai/claude-code) running in the same directory
 
 **Optional (for integrations):**
+- [snacks.nvim](https://github.com/folke/snacks.nvim) (included in LazyVim)
 - [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
 - [fzf-lua](https://github.com/ibhagwan/fzf-lua)
 - [trouble.nvim](https://github.com/folke/trouble.nvim) v3
-- [nvim-web-devicons](https://github.com/nvim-tree/nvim-web-devicons) (file icons in sidebar/telescope)
+- [nvim-web-devicons](https://github.com/nvim-tree/nvim-web-devicons) (file icons in sidebar/pickers)
 
 ## Documentation
 
@@ -299,6 +400,7 @@ All highlights use `default = true` so you can override them in your colorscheme
 | `ClaudeSession` | blue | Session-detected file (○) |
 | `ClaudeDir` | grey | Directory group headers |
 | `ClaudeFile` | white | Filenames |
+| `ClaudeFileCurrent` | white, bold, bg | Currently open file in sidebar |
 | `ClaudeStats` | dark grey | +N/-M stats |
 | `ClaudeCount` | blue | File count summary |
 | `ClaudeSep` | dark grey | Separator lines |
