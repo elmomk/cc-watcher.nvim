@@ -12,31 +12,32 @@ local state = {
 	bufs = {},  -- scratch buffers we created
 }
 
---- Collect all files Claude has changed (watcher + session), filtered to those with snapshots
+--- Collect all files Claude has changed (watcher + session)
 ---@param callback fun(files: { abs: string, rel: string }[])
 local function collect_changed_files(callback)
-	local snapshots = require("cc-watcher.snapshots")
 	require("cc-watcher.util").collect_files(function(files, cwd)
-		local filtered = {}
-		for _, f in ipairs(files) do
-			if f.live or snapshots.has(f.abs) then
-				filtered[#filtered + 1] = f
-			end
-		end
-		callback(filtered)
+		callback(files)
 	end)
 end
 
---- Create a readonly scratch buffer with snapshot content
+--- Create a readonly scratch buffer with pre-edit content (git HEAD or snapshot fallback)
 ---@param filepath string absolute path
 ---@return number|nil bufnr
-local function create_snapshot_buf(filepath)
-	local snapshots = require("cc-watcher.snapshots")
-	local snap = snapshots.get(filepath)
-	if not snap then return nil end
+local function create_before_buf(filepath)
+	local util = require("cc-watcher.util")
+
+	-- Get pre-edit content: git HEAD first, snapshot fallback
+	local old_text = util.get_old_text(filepath)
+	if old_text == "" then return nil end
+
+	local lines = vim.split(old_text, "\n", { plain = true })
+	-- Remove trailing empty string from split
+	if #lines > 0 and lines[#lines] == "" then
+		table.remove(lines)
+	end
 
 	local buf = vim.api.nvim_create_buf(false, true)
-	vim.api.nvim_buf_set_lines(buf, 0, -1, false, snap.lines)
+	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 
 	vim.bo[buf].buftype = "nofile"
 	vim.bo[buf].bufhidden = "wipe"
@@ -59,12 +60,6 @@ end
 function M.open_file(filepath)
 	filepath = vim.fn.fnamemodify(filepath, ":p")
 
-	local snap = require("cc-watcher.snapshots").get(filepath)
-	if not snap then
-		vim.notify("No snapshot for " .. relpath(filepath), vim.log.levels.WARN)
-		return
-	end
-
 	-- Check file exists on disk
 	local stat = vim.uv.fs_stat(filepath)
 	if not stat then
@@ -72,13 +67,16 @@ function M.open_file(filepath)
 		return
 	end
 
-	local snap_buf = create_snapshot_buf(filepath)
-	if not snap_buf then return end
+	local before_buf = create_before_buf(filepath)
+	if not before_buf then
+		vim.notify("No git history for " .. relpath(filepath), vim.log.levels.WARN)
+		return
+	end
 
 	-- Open snapshot buffer on the left
 	vim.cmd("tabnew")
 	local tab = vim.api.nvim_get_current_tabpage()
-	vim.api.nvim_win_set_buf(0, snap_buf)
+	vim.api.nvim_win_set_buf(0, before_buf)
 	vim.cmd("diffthis")
 
 	-- Open current file on the right
@@ -87,17 +85,17 @@ function M.open_file(filepath)
 
 	-- Store state for cleanup
 	state.tabpage = tab
-	state.bufs = { snap_buf }
+	state.bufs = { before_buf }
 
 	-- Set up q to close the diff tab
 	local function close_tab()
 		M.close()
 	end
 
-	vim.keymap.set("n", "q", close_tab, { buffer = snap_buf, nowait = true, silent = true })
+	vim.keymap.set("n", "q", close_tab, { buffer = before_buf, nowait = true, silent = true })
 
 	local cur_buf = vim.api.nvim_get_current_buf()
-	if cur_buf ~= snap_buf then
+	if cur_buf ~= before_buf then
 		vim.keymap.set("n", "q", close_tab, { buffer = cur_buf, nowait = true, silent = true })
 	end
 end
@@ -134,10 +132,10 @@ function M.open()
 				idx = i
 
 				local file = files[idx]
-				local snap_buf = create_snapshot_buf(file.abs)
+				local before_buf = create_before_buf(file.abs)
 
-				if not snap_buf then
-					vim.notify("No snapshot for " .. file.rel, vim.log.levels.WARN)
+				if not before_buf then
+					vim.notify("No git history for " .. file.rel, vim.log.levels.WARN)
 					return
 				end
 
@@ -164,11 +162,11 @@ function M.open()
 						pcall(vim.api.nvim_buf_delete, b, { force = true })
 					end
 				end
-				scratch_bufs = { snap_buf }
+				scratch_bufs = { before_buf }
 
 				-- Left: snapshot
 				local win = vim.api.nvim_tabpage_list_wins(tab)[1]
-				vim.api.nvim_win_set_buf(win, snap_buf)
+				vim.api.nvim_win_set_buf(win, before_buf)
 				vim.api.nvim_win_call(win, function()
 					vim.cmd("diffthis")
 				end)
@@ -201,9 +199,9 @@ function M.open()
 					end, opts)
 				end
 
-				setup_keys(snap_buf)
+				setup_keys(before_buf)
 				local cur_buf = vim.api.nvim_get_current_buf()
-				if cur_buf ~= snap_buf then
+				if cur_buf ~= before_buf then
 					setup_keys(cur_buf)
 				end
 			end
