@@ -89,9 +89,23 @@ local function do_render(session_files)
 	displayed_files = collect_files(session_files)
 	line_to_file = {}
 
+	-- Find the file open in the main editor window
+	local current_file = nil
+	for _, win in ipairs(vim.api.nvim_list_wins()) do
+		if win ~= sidebar_win then
+			local buf = vim.api.nvim_win_get_buf(win)
+			local name = vim.api.nvim_buf_get_name(buf)
+			if name ~= "" and vim.bo[buf].buftype == "" then
+				current_file = name
+				break
+			end
+		end
+	end
+
 	local lines = {}
 	local hls = {}
 	local total_add, total_del = 0, 0
+	local current_file_row = nil
 
 	-- Header
 	lines[1] = " 󰚩 Claude Code"
@@ -170,8 +184,14 @@ local function do_render(session_files)
 					local icon_start = #indent + #indicator + 1
 					hls[#hls + 1] = { cur_ln, icon_hl, icon_start, icon_start + #icon }
 				end
-				-- Filename
-				hls[#hls + 1] = { cur_ln, "ClaudeFile", #prefix, #prefix + #name }
+				-- Filename (bold highlight if it's the currently open file)
+				local is_current = current_file and file.abs == current_file
+				if is_current then
+					hls[#hls + 1] = { cur_ln, "ClaudeFileCurrent", 0, -1 }
+					current_file_row = #lines
+				end
+				local file_hl = is_current and "ClaudeFileCurrent" or "ClaudeFile"
+				hls[#hls + 1] = { cur_ln, file_hl, #prefix, #prefix + #name }
 				-- Stats
 				if stats ~= "" then
 					hls[#hls + 1] = { cur_ln, "ClaudeStats", #line - #stats, -1 }
@@ -209,6 +229,11 @@ local function do_render(session_files)
 			hl_group = h[2],
 			hl_eol = (h[4] or -1) == -1,
 		})
+	end
+
+	-- Move cursor to the current file's line
+	if current_file_row and sidebar_win and vim.api.nvim_win_is_valid(sidebar_win) then
+		pcall(vim.api.nvim_win_set_cursor, sidebar_win, { current_file_row, 0 })
 	end
 end
 
