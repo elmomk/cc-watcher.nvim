@@ -394,12 +394,15 @@ local function do_render(session_files)
 	vim.bo[sidebar_buf].modifiable = false
 
 	-- Apply highlights using extmarks (not deprecated buf_add_highlight)
+	-- Higher priority for file-level highlights so they aren't overridden
+	local high_pri = { ClaudeFileLatest = true, ClaudeFileCurrent = true }
 	vim.api.nvim_buf_clear_namespace(sidebar_buf, ns, 0, -1)
 	for _, h in ipairs(hls) do
 		pcall(vim.api.nvim_buf_set_extmark, sidebar_buf, ns, h[1], h[3] or 0, {
 			end_col = (h[4] and h[4] >= 0) and h[4] or nil,
 			hl_group = h[2],
 			hl_eol = (h[4] or -1) == -1,
+			priority = high_pri[h[2]] and 200 or 100,
 		})
 	end
 
