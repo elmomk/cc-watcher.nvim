@@ -305,19 +305,21 @@ local function do_render(session_files)
 				best_file = f.abs
 			end
 		end
-		if best_file then
-			latest_changed_file = best_file
-		end
+		if best_file then latest_changed_file = best_file end
 
 		-- Flat list: full relative path per line
 		for _, file in ipairs(displayed_files) do
 			local _, name = split_path(file.rel)
 			local icon, icon_hl = get_icon(name)
 
+			local is_latest_file = not viewing_commit and latest_changed_file and file.abs == latest_changed_file
 			local indicator, ind_hl
 			if viewing_commit then
 				indicator = "◆"
 				ind_hl = "ClaudeSession"
+			elseif is_latest_file then
+				indicator = "▶"
+				ind_hl = "ClaudeFileLatest"
 			else
 				indicator = file.live and "●" or "○"
 				ind_hl = file.live and "ClaudeLive" or "ClaudeSession"
