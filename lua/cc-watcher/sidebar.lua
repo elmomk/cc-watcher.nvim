@@ -596,6 +596,8 @@ function M.setup()
 
 	-- Event-driven sidebar refresh on JSONL change
 	session.on_jsonl_change(function()
+		-- Force re-seed of latest_changed_file on next render
+		latest_changed_file = nil
 		if not is_open() then return end
 		jsonl_debounce:stop()
 		jsonl_debounce:start(300, 0, vim.schedule_wrap(function() M.render() end))
