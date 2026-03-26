@@ -29,40 +29,38 @@ function M.setup()
 end
 
 local function get_before_lines(filepath, current_raw)
-	local snap = snapshots.get(filepath)
-	if snap then
-		-- If snapshot differs from current, use it
-		if not current_raw or snap.raw ~= current_raw then
-			return snap.lines
-		end
-	end
-	-- Fall through to git
+	-- Always prefer git HEAD — snapshots are taken on BufReadPost (post-edit)
 	local git_rel, git_dir = util.git_relpath(filepath)
-	if not git_rel then return nil end
-	local cmd = git_dir
-		and ("git -C " .. vim.fn.shellescape(git_dir) .. " show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
-		or ("git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
-	local lines = vim.fn.systemlist(cmd)
-	if vim.v.shell_error == 0 and #lines > 0 then return lines end
+	if git_rel then
+		local cmd = git_dir
+			and ("git -C " .. vim.fn.shellescape(git_dir) .. " show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
+			or ("git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
+		local lines = vim.fn.systemlist(cmd)
+		if vim.v.shell_error == 0 and #lines > 0 then return lines end
+	end
+	-- Fallback to snapshot (for new untracked files)
+	local snap = snapshots.get(filepath)
+	if snap and (not current_raw or snap.raw ~= current_raw) then
+		return snap.lines
+	end
 	return nil
 end
 
 local function get_before_raw(filepath, current_raw)
-	local snap = snapshots.get(filepath)
-	if snap then
-		-- If snapshot differs from current, use it
-		if not current_raw or snap.raw ~= current_raw then
-			return snap.raw
-		end
-	end
-	-- Fall through to git
+	-- Always prefer git HEAD — snapshots are taken on BufReadPost (post-edit)
 	local git_rel, git_dir = util.git_relpath(filepath)
-	if not git_rel then return nil end
-	local cmd = git_dir
-		and ("git -C " .. vim.fn.shellescape(git_dir) .. " show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
-		or ("git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
-	local lines = vim.fn.systemlist(cmd)
-	if vim.v.shell_error == 0 and #lines > 0 then return table.concat(lines, "\n") .. "\n" end
+	if git_rel then
+		local cmd = git_dir
+			and ("git -C " .. vim.fn.shellescape(git_dir) .. " show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
+			or ("git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
+		local lines = vim.fn.systemlist(cmd)
+		if vim.v.shell_error == 0 and #lines > 0 then return table.concat(lines, "\n") .. "\n" end
+	end
+	-- Fallback to snapshot (for new untracked files)
+	local snap = snapshots.get(filepath)
+	if snap and (not current_raw or snap.raw ~= current_raw) then
+		return snap.raw
+	end
 	return nil
 end
 

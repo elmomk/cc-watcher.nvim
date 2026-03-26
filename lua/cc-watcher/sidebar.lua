@@ -67,9 +67,10 @@ local function split_path(rel)
 	return dir or "", name or rel
 end
 
---- Compute +N/-M stats for a file (only if buffer is loaded, else 0,0)
+--- Compute +N/-M stats for a file (from buffer or disk)
 ---@return number add, number del, string stats_str
 local function file_stats(filepath)
+	-- Try from loaded buffer first
 	for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
 		if vim.api.nvim_buf_is_loaded(bufnr) and vim.api.nvim_buf_get_name(bufnr) == filepath then
 			local add, del = diff.file_stats(filepath, bufnr)
@@ -77,6 +78,18 @@ local function file_stats(filepath)
 				return add, del, "+" .. add .. " -" .. del
 			end
 			return 0, 0, ""
+		end
+	end
+	-- No buffer — compute from disk using git HEAD as baseline
+	local old_text = util.get_old_text(filepath)
+	local new_text = util.read_file(filepath) or ""
+	if old_text ~= "" and new_text ~= "" then
+		local hunks = util.compute_hunks(old_text, new_text)
+		if hunks then
+			local add, del = util.hunk_stats(hunks)
+			if add > 0 or del > 0 then
+				return add, del, "+" .. add .. " -" .. del
+			end
 		end
 	end
 	return 0, 0, ""

@@ -48,31 +48,31 @@ function M.read_file(filepath)
 	return data
 end
 
---- Get the "before" text for a file (snapshot or git HEAD fallback)
+--- Get the "before" text for a file (git HEAD, snapshot fallback)
 ---@param filepath string absolute path
 ---@param cwd string|nil
 ---@param current_text string|nil current file content for snapshot comparison
 ---@return string old text (may be empty)
 function M.get_old_text(filepath, cwd, current_text)
+	-- Always prefer git HEAD — snapshots are taken on BufReadPost which is
+	-- typically after Claude has already edited the file (post-edit content).
+	local git_rel, git_dir = M.git_relpath(filepath)
+	if git_rel and not git_rel:find("%.%./") then
+		local cmd = "git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null"
+		if git_dir then cmd = "git -C " .. vim.fn.shellescape(git_dir) .. " show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null" end
+		local lines = vim.fn.systemlist(cmd)
+		if vim.v.shell_error == 0 and #lines > 0 then
+			return table.concat(lines, "\n") .. "\n"
+		end
+	end
+
+	-- Fallback to snapshot (for new untracked files)
 	local snapshots = require("cc-watcher.snapshots")
 	local snap = snapshots.get(filepath)
-
-	-- Use snapshot if it exists AND differs from current content
 	if snap and snap.raw ~= "" then
 		if not current_text or snap.raw ~= current_text then
 			return snap.raw
 		end
-		-- Snapshot matches current — fall through to git HEAD
-	end
-
-	local git_rel, git_dir = M.git_relpath(filepath)
-	if not git_rel or git_rel:find("%.%./") then return "" end
-
-	local cmd = "git show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null"
-	if git_dir then cmd = "git -C " .. vim.fn.shellescape(git_dir) .. " show HEAD:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null" end
-	local lines = vim.fn.systemlist(cmd)
-	if vim.v.shell_error == 0 and #lines > 0 then
-		return table.concat(lines, "\n") .. "\n"
 	end
 	return ""
 end
