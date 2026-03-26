@@ -144,7 +144,10 @@ function M.apply_signs(bufnr, filepath)
 end
 
 --- Show full inline diff. Toggles off if already shown.
-function M.show(filepath)
+---@param filepath string|nil
+---@param opts table|nil { jump = bool } whether to jump to first change
+function M.show(filepath, opts)
+	opts = opts or {}
 	filepath = filepath or vim.api.nvim_buf_get_name(0)
 	if filepath == "" then return end
 
@@ -306,8 +309,8 @@ function M.show(filepath)
 		vim.notify("No hunk under cursor", vim.log.levels.INFO)
 	end, { buffer = bufnr, silent = true, desc = "Revert Claude hunk" })
 
-	-- Always jump to first change
-	if first_change then
+	-- Jump to first change if requested
+	if opts.jump and first_change then
 		pcall(vim.api.nvim_win_set_cursor, 0, { first_change, 0 })
 		vim.cmd("normal! zz")
 		flash_line(bufnr, first_change)

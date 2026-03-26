@@ -341,7 +341,7 @@ function M.open()
 		end
 		vim.cmd("wincmd p")
 		vim.cmd("edit " .. vim.fn.fnameescape(f.abs))
-		require("cc-watcher.diff").show(f.abs)
+		require("cc-watcher.diff").show(f.abs, { jump = true })
 	end
 
 	vim.keymap.set("n", "<CR>", open_with_diff, opts)

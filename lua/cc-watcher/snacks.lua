@@ -70,7 +70,7 @@ function M.changed_files()
 								hl = "ClaudeDiffChange"
 							end
 							if hl then
-								vim.api.nvim_buf_set_extmark(buf, ns, i - 1, 0, {
+								pcall(vim.api.nvim_buf_set_extmark, buf, ns, i - 1, 0, {
 									line_hl_group = hl,
 									priority = 200,
 								})
@@ -83,7 +83,7 @@ function M.changed_files()
 				confirm = function(picker, item)
 					picker:close()
 					vim.cmd("edit " .. vim.fn.fnameescape(item.file))
-					require("cc-watcher.diff").show(item.file)
+					require("cc-watcher.diff").show(item.file, { jump = true })
 				end,
 			})
 		end)
@@ -127,7 +127,7 @@ function M.hunks()
 					vim.cmd("edit " .. vim.fn.fnameescape(item.file))
 					pcall(vim.api.nvim_win_set_cursor, 0, { item.pos[1], 0 })
 					vim.cmd("normal! zz")
-					require("cc-watcher.diff").show(item.file)
+					require("cc-watcher.diff").show(item.file, { jump = true })
 				end,
 			})
 		end)
