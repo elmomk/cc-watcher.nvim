@@ -147,8 +147,14 @@ function M.collect_files(callback)
 	session.get_claude_edited_files_async(function(session_files)
 		for _, filepath in ipairs(session_files or {}) do
 			if not seen[filepath] then
-				seen[filepath] = true
-				files[#files + 1] = { abs = filepath, rel = M.relpath(filepath, cwd), live = false }
+				-- Only include session files that actually differ from git HEAD
+				local old_text = M.get_old_text(filepath, cwd)
+				local new_text = M.read_file(filepath) or ""
+				local hunks = M.compute_hunks(old_text, new_text)
+				if hunks and #hunks > 0 then
+					seen[filepath] = true
+					files[#files + 1] = { abs = filepath, rel = M.relpath(filepath, cwd), live = false }
+				end
 			end
 		end
 		table.sort(files, function(a, b) return a.rel < b.rel end)

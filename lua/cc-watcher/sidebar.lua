@@ -72,7 +72,13 @@ local function collect_files(session_files)
 
 	for _, filepath in ipairs(session_files or {}) do
 		if not seen[filepath] then
-			files[#files + 1] = { abs = filepath, rel = relpath(filepath), live = false }
+			-- Only include session files that actually have changes vs git HEAD
+			local old_text = util.get_old_text(filepath)
+			local new_text = util.read_file(filepath) or ""
+			local hunks = util.compute_hunks(old_text, new_text)
+			if hunks and #hunks > 0 then
+				files[#files + 1] = { abs = filepath, rel = relpath(filepath), live = false }
+			end
 		end
 	end
 
