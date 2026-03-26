@@ -8,37 +8,58 @@ local defaults = {
 		toggle_sidebar = "<leader>cs",
 		toggle_diff = "<leader>cd",
 	},
+	integrations = {
+		telescope = false,
+		fzf_lua = false,
+		trouble = false,
+		diffview = false,
+	},
 }
 
 M.config = vim.deepcopy(defaults)
 
+local _setup_done = false
+
+--- Internal: ensure setup() has been called at least once (with defaults).
+--- Used by command stubs in plugin/cc-watcher.lua so that lazy-loaded
+--- commands work even if the user never called setup() explicitly.
+function M._ensure_setup()
+	if not _setup_done then
+		M.setup()
+	end
+end
+
+--- Primary configuration entry point. Idempotent — safe to call multiple times.
+--- On repeated calls the config is updated but watchers/keymaps are not re-registered.
 function M.setup(opts)
 	M.config = vim.tbl_deep_extend("force", defaults, opts or {})
 
+	if _setup_done then
+		return
+	end
+	_setup_done = true
+
 	local watcher = require("cc-watcher.watcher")
 	local sidebar = require("cc-watcher.sidebar")
-	local diff = require("cc-watcher.diff")
 	local session = require("cc-watcher.session")
 
 	watcher.setup()
 	sidebar.setup()
 	session.watch_jsonl()
 
-	vim.api.nvim_create_user_command("ClaudeSidebar", sidebar.toggle, {
-		desc = "Toggle Claude Code changed files sidebar",
-	})
-	vim.api.nvim_create_user_command("ClaudeDiff", function() diff.show() end, {
-		desc = "Toggle inline diff for current file",
-	})
-
+	-- Keymaps
 	local keys = M.config.keys
 	if keys.toggle_sidebar then
-		vim.keymap.set("n", keys.toggle_sidebar, sidebar.toggle, {
+		vim.keymap.set("n", keys.toggle_sidebar, function()
+			require("cc-watcher.sidebar").toggle()
+		end, {
 			silent = true, desc = "Claude - toggle sidebar",
 		})
 	end
 	if keys.toggle_diff then
-		vim.keymap.set("n", keys.toggle_diff, function() diff.show() end, {
+		vim.keymap.set("n", keys.toggle_diff, function()
+			require("cc-watcher.diff").show()
+		end, {
 			silent = true, desc = "Claude - toggle inline diff",
 		})
 	end
@@ -60,5 +81,19 @@ function M.statusline()
 	if n == 0 then return "" end
 	return "󰚩 " .. n
 end
+
+--- Lazy.nvim spec helpers — spread into your plugin spec:
+---   { "user/cc-watcher.nvim", opts = { ... }, ... require("cc-watcher").lazy }
+M.lazy = {
+	cmd = {
+		"ClaudeSidebar", "ClaudeDiff",
+		"ClaudeTelescope", "ClaudeFzf", "ClaudeTrouble", "ClaudeDiffview",
+	},
+	keys = {
+		{ "<leader>cs", function() require("cc-watcher")._ensure_setup(); require("cc-watcher.sidebar").toggle() end, desc = "Claude - toggle sidebar" },
+		{ "<leader>cd", function() require("cc-watcher")._ensure_setup(); require("cc-watcher.diff").show() end, desc = "Claude - toggle inline diff" },
+	},
+	event = { "BufReadPost", "BufNewFile" },
+}
 
 return M

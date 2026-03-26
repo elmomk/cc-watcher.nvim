@@ -267,6 +267,12 @@ local function show_help()
 		"│    cr      Revert hunk         │",
 		"│    <leader>cd  Toggle diff     │",
 		"│                                │",
+		"│  Integrations (opt-in):        │",
+		"│    :ClaudeTelescope [hunks]    │",
+		"│    :ClaudeFzf [hunks]          │",
+		"│    :ClaudeTrouble              │",
+		"│    :ClaudeDiffview [file]      │",
+		"│                                │",
 		"│  ● live change  ○ from session │",
 		"╰────────────────────────────────╯",
 	}

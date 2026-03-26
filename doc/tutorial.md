@@ -1,0 +1,1062 @@
+# cc-watcher.nvim Tutorial
+
+A hands-on guide to monitoring Claude Code changes in real time from inside Neovim.
+
+---
+
+## Table of Contents
+
+1. [Getting Started](#1-getting-started)
+2. [The Workflow](#2-the-workflow)
+3. [Understanding the Sidebar](#3-understanding-the-sidebar)
+4. [Working with Diffs](#4-working-with-diffs)
+5. [Snapshot-Based Diffing](#5-snapshot-based-diffing-key-concept)
+6. [Telescope Integration](#6-telescope-integration)
+7. [fzf-lua Integration](#7-fzf-lua-integration)
+8. [trouble.nvim Integration](#8-troublenvim-integration)
+9. [Diffview Integration](#9-diffview-integration)
+10. [Statusline Integration](#10-statusline-integration)
+11. [Customization](#11-customization)
+12. [Advanced Usage](#12-advanced-usage)
+13. [Lazy Loading](#13-lazy-loading)
+14. [Tips and Tricks](#14-tips-and-tricks)
+15. [Troubleshooting](#15-troubleshooting)
+
+---
+
+## 1. Getting Started
+
+### Prerequisites
+
+- **Neovim >= 0.10** (required for `vim.uv`, `vim.diff`, and modern extmark features)
+- **Claude Code** installed and functional (`claude` command available in your terminal)
+- **git** (used as a fallback when no snapshot exists for a file)
+
+### Installation with lazy.nvim
+
+**Minimal setup** -- just the plugin with default settings:
+
+```lua
+{
+    "elmomk/cc-watcher.nvim",
+    config = function()
+        require("cc-watcher").setup()
+    end,
+}
+```
+
+**Full setup** with lazy loading and all integrations enabled:
+
+```lua
+{
+    "elmomk/cc-watcher.nvim",
+    event = { "BufReadPost", "BufNewFile" },
+    cmd = {
+        "ClaudeSidebar", "ClaudeDiff",
+        "ClaudeTelescope", "ClaudeFzf", "ClaudeTrouble", "ClaudeDiffview",
+    },
+    keys = {
+        { "<leader>cs", desc = "Claude - toggle sidebar" },
+        { "<leader>cd", desc = "Claude - toggle inline diff" },
+    },
+    config = function()
+        require("cc-watcher").setup({
+            sidebar_width = 36,
+            keys = {
+                toggle_sidebar = "<leader>cs",
+                toggle_diff = "<leader>cd",
+            },
+            integrations = {
+                telescope = true,   -- requires telescope.nvim
+                fzf_lua = true,     -- requires fzf-lua
+                trouble = true,     -- requires trouble.nvim v3
+                diffview = true,    -- no extra dependency (uses vim diff mode)
+            },
+        })
+    end,
+}
+```
+
+### Verify it works
+
+1. Open a terminal and `cd` into any project directory.
+2. Start Neovim in that directory: `nvim .`
+3. Run `:ClaudeSidebar` -- you should see the sidebar open on the left with "Waiting for changes..."
+4. In a separate terminal (same directory), start Claude Code and ask it to edit a file.
+5. Watch the sidebar update in real time as Claude writes.
+
+If the sidebar shows "session active" near the top, the plugin has found Claude Code's session. You are ready to go.
+
+---
+
+## 2. The Workflow
+
+cc-watcher.nvim is designed for a **tmux split workflow**: Claude Code on one side, Neovim on the other.
+
+### Step-by-step setup
+
+**1. Create a tmux split.**
+
+```bash
+# Start tmux (if not already in a session)
+tmux
+
+# Split vertically: left pane for Claude, right for Neovim
+tmux split-window -h
+```
+
+**2. Left pane: Claude Code.**
+
+In the left pane, navigate to your project and start Claude:
+
+```bash
+cd ~/projects/my-app
+claude
+```
+
+**3. Right pane: Neovim with cc-watcher.**
+
+In the right pane, open Neovim in the same directory:
+
+```bash
+cd ~/projects/my-app
+nvim .
+```
+
+Open the sidebar:
+
+```
+:ClaudeSidebar
+```
+
+**4. Ask Claude to edit files.**
+
+In the left pane, give Claude a task:
+
+```
+> Add input validation to the create_user function in src/handlers.rs
+```
+
+**5. Watch the sidebar update.**
+
+As Claude writes files, you will see entries appear in the sidebar in real time:
+
+```
+ Claude Code
+  session active
+────────────────────────────────────
+  src/
+    ● handlers.rs                +12 -3
+    ● models.rs                   +5 -0
+
+  2 files  +17 -3
+  g? help
+```
+
+The `+N/-M` stats update live as the file content changes.
+
+**6. Click into files to see inline diffs.**
+
+Move your cursor to a file in the sidebar and press `<CR>` (or `d`). The file opens in the editor pane with full inline diff highlighting:
+
+- Green background: lines Claude added
+- Yellow background: lines Claude changed (with the old version shown above in red virtual text)
+- Red virtual text: lines Claude deleted
+
+**7. Navigate and review.**
+
+Use `]c` to jump to the next hunk, `[c` to jump to the previous one. Each jump flashes the target line briefly so you can orient yourself.
+
+If a hunk looks wrong, press `cr` while your cursor is inside it to **revert just that hunk** back to its original state. Other changes in the file are preserved.
+
+---
+
+## 3. Understanding the Sidebar
+
+Open the sidebar with `<leader>cs` or `:ClaudeSidebar`. Here is what you see:
+
+```
+ Claude Code                        <- header
+  session active                    <- Claude Code is running here
+────────────────────────────────────  <- separator
+  src/
+    ● handlers.rs          +12 -3  <- live-detected, 12 added 3 deleted
+    ● models.rs             +5 -0  <- live-detected, 5 added
+  tests/
+    ○ test_handlers.rs      +8 -2  <- session-detected
+
+  3 files  +25 -5                   <- summary footer
+  g? help                           <- press g? for help overlay
+```
+
+### Indicators
+
+| Symbol | Meaning |
+|--------|---------|
+| `●` (yellow) | **Live change** -- detected by the file watcher as Claude wrote the file |
+| `○` (blue) | **Session change** -- found in Claude Code's JSONL log (Write/Edit tool calls) |
+
+Live changes are files you had open in Neovim when Claude edited them. The `fs_event` watcher caught the modification instantly.
+
+Session changes are files Claude edited that you did **not** have open. The plugin found them by parsing Claude's JSONL session log at `~/.claude/projects/`.
+
+### Directory grouping
+
+Files are grouped by their parent directory. Root-level files appear without a directory header. This keeps the sidebar readable when Claude edits files across many directories.
+
+### Stats
+
+The `+N/-M` next to each file shows how many lines were added and deleted compared to the snapshot (or git HEAD if no snapshot exists). These stats are only computed for files that have a loaded buffer.
+
+### Session status
+
+- **"session active"** (green) -- Claude Code is running in this directory. The plugin found a valid session file at `~/.claude/sessions/` with a matching PID.
+- **"no session"** (grey) -- No active Claude Code process found for this working directory.
+
+### How detection works
+
+**Live detection:** When you open a file in Neovim, cc-watcher registers a `libuv fs_event` watcher on it. If Claude (or anything else) modifies that file on disk, the watcher fires, the buffer auto-reloads (`checktime`), and the file appears in the sidebar with `●`.
+
+**Session detection:** cc-watcher reads Claude Code's JSONL log files from `~/.claude/projects/`. It does incremental tail-reads: only new bytes since the last parse are processed. It looks for `Write` and `Edit` tool calls and extracts the file paths. This catches files Claude edited even if you never opened them.
+
+### Sidebar keybindings
+
+| Key | Action |
+|-----|--------|
+| `<CR>` / `d` | Open file in editor pane with inline diff activated |
+| `o` | Open file without diff |
+| `r` | Force refresh the file list |
+| `q` | Close the sidebar |
+| `g?` | Show help overlay |
+
+The sidebar also refreshes automatically whenever a live change is detected or the JSONL log updates.
+
+---
+
+## 4. Working with Diffs
+
+cc-watcher provides two levels of diff visualization:
+
+### Sign column indicators (always on for changed files)
+
+When Claude modifies a file you have open, lightweight sign-column markers appear automatically:
+
+| Sign | Color | Meaning |
+|------|-------|---------|
+| `┃` | Green | Lines added |
+| `┃` | Yellow | Lines changed |
+| `▁` | Red | Lines deleted (marker at the deletion point) |
+
+These are subtle indicators that show at a glance which regions changed. They appear as soon as a file is detected as changed, without needing to activate the full diff.
+
+### Full inline diff
+
+Toggle the full inline diff with `<leader>cd` or `:ClaudeDiff`. This is where things get detailed:
+
+**Added lines** show with a green background and a green `┃` sign:
+
+```
+     let result = parse(data)?;
+ ┃ + let validated = validate(&data);      <- green background
+ ┃ + let normalized = normalize(validated); <- green background
+     Ok(result)
+```
+
+**Changed lines** show the old version above (as red virtual text with `~` prefix) and the new version below with a yellow background:
+
+```
+   ~ let timeout = 30;                      <- red virtual text (old)
+ ┃   let timeout = Duration::from_secs(60); <- yellow background (new)
+```
+
+**Deleted lines** appear as red virtual text with `-` prefix at the point they were removed:
+
+```
+     fn process(data: &str) {
+   - let debug = true;                      <- red virtual text
+   - println!("{:?}", data);                <- red virtual text
+     let result = parse(data);
+```
+
+### Toggling
+
+Running `<leader>cd` (or `:ClaudeDiff`) again on the same file **toggles the diff off**. The sign column indicators remain, but the full inline highlights and virtual text are removed.
+
+### Navigating hunks
+
+When the full inline diff is active, two buffer-local keybindings are set:
+
+| Key | Action |
+|-----|--------|
+| `]c` | Jump to the next hunk |
+| `[c` | Jump to the previous hunk |
+
+Each jump centers the hunk on screen (`zz`) and flashes the line for 300ms using the `IncSearch` highlight, so you can immediately see where you landed.
+
+At the last hunk, `]c` shows "No next hunk". At the first, `[c` shows "No previous hunk".
+
+### Reverting hunks
+
+Press `cr` with your cursor inside a hunk to **revert that specific hunk** to its pre-Claude state. The rest of the file is untouched.
+
+For example, if Claude added 3 hunks to a file and you like 2 of them but not the third:
+
+1. `]c` to navigate to the hunk you want to remove
+2. `cr` to revert it
+3. The diff re-renders automatically, now showing only the 2 remaining hunks
+
+After reverting, the diff recalculates and reapplies, so hunk navigation stays accurate.
+
+---
+
+## 5. Snapshot-Based Diffing (Key Concept)
+
+This is the single most important concept in cc-watcher. Understanding it prevents confusion.
+
+### Why snapshots, not git diff?
+
+Most diff tools compare against `git HEAD`. This is wrong for reviewing AI changes because:
+
+- If **you** edited a file before Claude did, a git diff would show **your** changes mixed with Claude's. You cannot tell who changed what.
+- If Claude's changes are on top of your uncommitted work, reverting a hunk with git data would destroy your work.
+
+cc-watcher takes a different approach: **when you open a file, it stores a snapshot of that file's content**. All diffs are computed against this snapshot.
+
+### How it works
+
+1. You open `src/handlers.rs` in Neovim. cc-watcher stores the file content at that moment.
+2. You make some edits and save. The snapshot still holds the original content.
+3. Claude edits the file. The watcher fires, the buffer reloads.
+4. You activate the diff. It shows changes between the snapshot (step 1) and the current file (after step 3).
+
+This means the diff shows **everything that changed since you opened the file**, including both your edits and Claude's. In the typical workflow (you open the file, then Claude edits it), the diff shows exactly what Claude did.
+
+### Fallback to git HEAD
+
+If you never opened a file before Claude edited it (so no snapshot exists), cc-watcher falls back to `git show HEAD:<file>`. This is a reasonable approximation, but it means uncommitted changes you made before the session will show in the diff.
+
+The sidebar notification "No snapshot for X" appears when this fallback is used.
+
+### LRU cache
+
+Snapshots are stored in memory with an LRU eviction policy:
+
+- **Max 100 files** -- when the 101st file is opened, the least-recently-accessed snapshot is evicted.
+- **Max 10MB per file** -- files larger than 10MB are not snapshotted.
+
+For most projects, 100 files is far more than you will have open in a session.
+
+### Clearing snapshots
+
+If you want to reset the baseline (for example, after you have reviewed and accepted Claude's changes and want to start fresh):
+
+```lua
+require("cc-watcher.snapshots").clear()
+```
+
+This removes all snapshots. The next time you open a file, a new snapshot is taken. You can also remove a single file's snapshot:
+
+```lua
+require("cc-watcher.snapshots").remove(vim.fn.expand("%:p"))
+```
+
+---
+
+## 6. Telescope Integration
+
+### Enable
+
+```lua
+require("cc-watcher").setup({
+    integrations = {
+        telescope = true,
+    },
+})
+```
+
+Requires [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) to be installed.
+
+### Changed files picker
+
+```vim
+:ClaudeTelescope
+" or
+:Telescope cc_watcher
+```
+
+Opens a Telescope picker listing all files Claude has changed. Each entry shows:
+
+- `●` / `○` indicator (live vs session)
+- File icon (if nvim-web-devicons is installed)
+- Relative file path
+- `+N/-M` stats
+
+The **preview pane** shows a unified diff of each file.
+
+**Actions:**
+
+| Key | Action |
+|-----|--------|
+| `<CR>` | Open file and activate inline diff |
+| `<Tab>` | Toggle multi-select |
+| `<CR>` (with multi-select) | Open all selected files (no diff) |
+
+### Hunks picker
+
+```vim
+:ClaudeTelescope hunks
+" or
+:Telescope cc_watcher hunks
+```
+
+Lists **every individual hunk** across all changed files. Each entry shows:
+
+```
+src/handlers.rs:42 -- +5/-2 lines
+src/handlers.rs:87 -- +3/-0 lines
+src/models.rs:15   -- +8/-4 lines
+```
+
+The preview pane shows the file content at the hunk location.
+
+Pressing `<CR>` opens the file, jumps to the hunk line, centers the view, and activates the inline diff.
+
+### Example workflow: quick review
+
+```
+1. :ClaudeTelescope hunks      -- see all hunks at a glance
+2. Browse the list, read previews
+3. <CR> on a suspicious hunk   -- opens file with diff
+4. cr                          -- revert that hunk if it is wrong
+5. <leader>cs                  -- check sidebar for remaining changes
+```
+
+---
+
+## 7. fzf-lua Integration
+
+### Enable
+
+```lua
+require("cc-watcher").setup({
+    integrations = {
+        fzf_lua = true,
+    },
+})
+```
+
+Requires [fzf-lua](https://github.com/ibhagwan/fzf-lua) to be installed.
+
+### Changed files
+
+```vim
+:ClaudeFzf
+```
+
+Shows all changed files with `●`/`○` indicators and `+N/-M` stats. The preview pane shows the unified diff. Selecting a file opens it with inline diff.
+
+### Hunks
+
+```vim
+:ClaudeFzf hunks
+```
+
+Lists all hunks across all changed files. The preview shows the file content around each hunk. Selecting a hunk opens the file, jumps to the line, and activates inline diff.
+
+### When to use fzf-lua vs Telescope
+
+Both provide the same functionality. Use whichever fuzzy finder you already have in your config. If you have both, enable both -- the commands are separate (`:ClaudeTelescope` vs `:ClaudeFzf`), so there is no conflict.
+
+---
+
+## 8. trouble.nvim Integration
+
+### Enable
+
+```lua
+require("cc-watcher").setup({
+    integrations = {
+        trouble = true,
+    },
+})
+```
+
+Requires [trouble.nvim](https://github.com/folke/trouble.nvim) **v3** to be installed.
+
+### Usage
+
+```vim
+:ClaudeTrouble
+```
+
+Opens a trouble.nvim window with a diagnostic-style list of all changes Claude made. Each hunk appears as an item:
+
+| Type | Meaning |
+|------|---------|
+| **Info** (blue) | Lines added |
+| **Warning** (yellow) | Lines changed |
+| **Hint** (green) | Lines deleted |
+
+Each item shows the file path, line number, and a description like `+5/-2 lines (changed)`.
+
+### Why use it
+
+trouble.nvim gives you a bird's-eye view of every change in a single scrollable list, sorted by file and line number. It is particularly useful when Claude made many small changes across many files and you want to quickly scan all of them.
+
+Click any item to jump directly to that hunk in the file.
+
+---
+
+## 9. Diffview Integration
+
+### Enable
+
+```lua
+require("cc-watcher").setup({
+    integrations = {
+        diffview = true,
+    },
+})
+```
+
+This integration uses Neovim's built-in `diffthis` command for side-by-side diffs. It does **not** require the diffview.nvim plugin (despite the name).
+
+### All changed files
+
+```vim
+:ClaudeDiffview
+```
+
+Opens a new tab with a side-by-side diff:
+
+- **Left pane:** Snapshot content (pre-Claude state, readonly)
+- **Right pane:** Current file content (editable)
+
+Both panes are in vim diff mode, so you get the familiar `]c`/`[c` navigation and full syntax highlighting.
+
+If Claude changed multiple files, navigate between them:
+
+| Key | Action |
+|-----|--------|
+| `]f` | Next file |
+| `[f` | Previous file |
+| `q` | Close the diff tab |
+
+A notification like `[1/3] src/handlers.rs` shows your position in the file list.
+
+### Single file
+
+```vim
+:ClaudeDiffview src/handlers.rs
+```
+
+Opens a side-by-side diff for just that one file. Useful when you already know which file you want to review in detail.
+
+### When to use it
+
+Use `:ClaudeDiffview` when you want the most comprehensive, familiar diff experience. It works exactly like `vimdiff` -- you get full color-coded side-by-side comparison with scroll binding, fold management, and all the standard diff mode features.
+
+For large changes spanning many files, this is the best way to do a thorough review.
+
+---
+
+## 10. Statusline Integration
+
+cc-watcher provides a statusline component that shows the count of changed files.
+
+### lualine.nvim
+
+```lua
+require("lualine").setup({
+    sections = {
+        lualine_x = {
+            {
+                require("cc-watcher").statusline,
+                cond = function()
+                    return require("cc-watcher").statusline() ~= ""
+                end,
+            },
+        },
+    },
+})
+```
+
+This displays `"N"` (with the Claude icon) when there are changed files, and hides completely when there are none.
+
+### heirline.nvim
+
+```lua
+local ClaudeStatus = {
+    provider = function()
+        local ok, ccw = pcall(require, "cc-watcher")
+        if not ok then return "" end
+        return ccw.statusline()
+    end,
+    condition = function()
+        local ok, ccw = pcall(require, "cc-watcher")
+        if not ok then return false end
+        return ccw.statusline() ~= ""
+    end,
+    hl = { fg = "#cba6f7" },
+}
+```
+
+Add `ClaudeStatus` to your statusline component tree wherever you want it to appear.
+
+### What it shows
+
+The statusline component returns an empty string when there are no changes (so it disappears), or a string like:
+
+```
+ 3
+```
+
+where `3` is the number of files Claude has changed. The icon is U+F0EA9 (nerd font: Claude/bot icon).
+
+---
+
+## 11. Customization
+
+### Overriding highlight groups
+
+All highlight groups are defined with `default = true`, so your colorscheme or manual overrides take priority. Set them **after** loading your colorscheme:
+
+```lua
+-- Example: adapt for a light colorscheme
+vim.api.nvim_set_hl(0, "ClaudeDiffAdd", { bg = "#d4edda", fg = "#155724" })
+vim.api.nvim_set_hl(0, "ClaudeDiffChange", { bg = "#fff3cd", fg = "#856404" })
+vim.api.nvim_set_hl(0, "ClaudeDiffDelete", { bg = "#f8d7da", fg = "#721c24" })
+vim.api.nvim_set_hl(0, "ClaudeDiffAddSign", { fg = "#28a745" })
+vim.api.nvim_set_hl(0, "ClaudeDiffChangeSign", { fg = "#ffc107" })
+vim.api.nvim_set_hl(0, "ClaudeDiffDeleteSign", { fg = "#dc3545" })
+
+-- Sidebar customization
+vim.api.nvim_set_hl(0, "ClaudeHeader", { fg = "#6f42c1", bold = true })
+vim.api.nvim_set_hl(0, "ClaudeActive", { fg = "#28a745" })
+vim.api.nvim_set_hl(0, "ClaudeInactive", { fg = "#999999", italic = true })
+```
+
+Full list of highlight groups:
+
+| Group | Default | Purpose |
+|-------|---------|---------|
+| `ClaudeDiffAdd` | green bg | Added lines in inline diff |
+| `ClaudeDiffChange` | yellow bg | Changed lines in inline diff |
+| `ClaudeDiffDelete` | red bg, dimmed | Deleted lines (virtual text) |
+| `ClaudeDiffDeleteNr` | red fg | The `- ` / `~ ` prefix on virtual text lines |
+| `ClaudeDiffAddSign` | green fg | Sign column: added |
+| `ClaudeDiffChangeSign` | yellow fg | Sign column: changed |
+| `ClaudeDiffDeleteSign` | red fg | Sign column: deleted |
+| `ClaudeHeader` | mauve, bold | Sidebar title |
+| `ClaudeActive` | green | "session active" text |
+| `ClaudeInactive` | grey, italic | "no session" text |
+| `ClaudeLive` | yellow | `●` indicator |
+| `ClaudeSession` | blue | `○` indicator |
+| `ClaudeDir` | grey | Directory names in sidebar |
+| `ClaudeFile` | light text | File names in sidebar |
+| `ClaudeStats` | dim | `+N -M` stats text |
+| `ClaudeCount` | blue | Footer summary line |
+| `ClaudeSep` | dark | Separator lines |
+| `ClaudeHelp` | dim | "g? help" text |
+
+### Changing keybindings
+
+Disable the default global keymaps and set your own:
+
+```lua
+require("cc-watcher").setup({
+    keys = {
+        toggle_sidebar = false,  -- disable default <leader>cs
+        toggle_diff = false,     -- disable default <leader>cd
+    },
+})
+
+-- Set your own keybindings
+vim.keymap.set("n", "<leader>cc", function()
+    require("cc-watcher.sidebar").toggle()
+end, { desc = "Claude sidebar" })
+
+vim.keymap.set("n", "<leader>ci", function()
+    require("cc-watcher.diff").show()
+end, { desc = "Claude inline diff" })
+```
+
+The sidebar-local keybindings (`<CR>`, `d`, `o`, `r`, `q`, `g?`) and diff-local keybindings (`]c`, `[c`, `cr`) are always set on their respective buffers and cannot be changed through config. To override them, set up autocommands on the `claude-sidebar` filetype.
+
+### Sidebar width
+
+```lua
+require("cc-watcher").setup({
+    sidebar_width = 40,  -- default is 36
+})
+```
+
+### Full customized example
+
+```lua
+{
+    "elmomk/cc-watcher.nvim",
+    event = { "BufReadPost", "BufNewFile" },
+    cmd = {
+        "ClaudeSidebar", "ClaudeDiff",
+        "ClaudeTelescope", "ClaudeDiffview",
+    },
+    keys = {
+        { "<leader>cc", function() require("cc-watcher.sidebar").toggle() end, desc = "Claude sidebar" },
+        { "<leader>ci", function() require("cc-watcher.diff").show() end, desc = "Claude inline diff" },
+        { "<leader>ct", "<cmd>ClaudeTelescope hunks<cr>", desc = "Claude hunks (telescope)" },
+        { "<leader>cv", "<cmd>ClaudeDiffview<cr>", desc = "Claude diffview" },
+    },
+    config = function()
+        require("cc-watcher").setup({
+            sidebar_width = 40,
+            keys = {
+                toggle_sidebar = false,
+                toggle_diff = false,
+            },
+            integrations = {
+                telescope = true,
+                diffview = true,
+            },
+        })
+
+        -- Custom highlights for tokyonight
+        vim.api.nvim_set_hl(0, "ClaudeHeader", { fg = "#bb9af7", bold = true })
+        vim.api.nvim_set_hl(0, "ClaudeDiffAdd", { bg = "#1a2b1a" })
+        vim.api.nvim_set_hl(0, "ClaudeDiffChange", { bg = "#2b2a1a" })
+        vim.api.nvim_set_hl(0, "ClaudeDiffDelete", { bg = "#2b1a1a", fg = "#6a4050" })
+    end,
+}
+```
+
+---
+
+## 12. Advanced Usage
+
+### Lua API
+
+cc-watcher exposes a programmatic API that you can use in your own scripts and configurations.
+
+**Hook into change events:**
+
+```lua
+-- Called every time a file change is detected
+require("cc-watcher.watcher").on_change(function(filepath, relpath)
+    -- filepath: absolute path (e.g., "/home/user/project/src/main.rs")
+    -- relpath: relative to cwd (e.g., "src/main.rs")
+    print("Changed: " .. relpath)
+end)
+```
+
+**Get all changed files:**
+
+```lua
+-- Returns a table: { [filepath] = true, ... }
+local changed = require("cc-watcher.watcher").get_changed_files()
+for filepath, _ in pairs(changed) do
+    print(filepath)
+end
+```
+
+**Check Claude session status:**
+
+```lua
+-- Returns session info table or nil
+local session = require("cc-watcher.session").find_active_session(vim.fn.getcwd())
+if session then
+    print("Claude is running, PID: " .. session.pid)
+end
+```
+
+**Get all files Claude edited in this session:**
+
+```lua
+require("cc-watcher.session").get_claude_edited_files_async(function(files)
+    -- files: list of absolute file paths
+    for _, filepath in ipairs(files) do
+        print(filepath)
+    end
+end)
+```
+
+**Snapshot operations:**
+
+```lua
+local snap = require("cc-watcher.snapshots")
+
+-- Check if a snapshot exists
+snap.has("/path/to/file.rs")  -- true/false
+
+-- Get snapshot data
+local data = snap.get("/path/to/file.rs")
+-- data.lines: table of lines
+-- data.raw: raw string content
+-- data.mtime: modification time when snapshot was taken
+
+-- Take a new snapshot (overwrites existing)
+snap.take("/path/to/file.rs")
+
+-- Remove one snapshot
+snap.remove("/path/to/file.rs")
+
+-- Clear all snapshots
+snap.clear()
+
+-- Count stored snapshots
+snap.count()  -- number
+```
+
+**Diff operations:**
+
+```lua
+local diff = require("cc-watcher.diff")
+
+-- Get add/delete stats for a file
+local add, del = diff.file_stats("/path/to/file.rs", bufnr)
+
+-- Count hunks
+local count = diff.hunk_count("/path/to/file.rs", bufnr)
+
+-- Programmatically show/toggle diff
+diff.show("/path/to/file.rs")
+
+-- Clear diff from a buffer
+diff.clear(bufnr)
+
+-- Apply sign-column-only indicators
+diff.apply_signs(bufnr, "/path/to/file.rs")
+```
+
+### Example: auto-run tests when Claude edits test files
+
+```lua
+require("cc-watcher.watcher").on_change(function(filepath, relpath)
+    if relpath:match("_test%.") or relpath:match("_spec%.") then
+        vim.notify("Test file changed, running tests...", vim.log.levels.INFO)
+        vim.cmd("!cargo test 2>&1 | tail -5")
+    end
+end)
+```
+
+### Example: auto-show diff when Claude changes the current buffer
+
+```lua
+require("cc-watcher.watcher").on_change(function(filepath, relpath)
+    local current = vim.api.nvim_buf_get_name(0)
+    if filepath == current then
+        vim.defer_fn(function()
+            require("cc-watcher.diff").show(filepath)
+        end, 200)  -- small delay to let the buffer reload
+    end
+end)
+```
+
+### Example: notification with file details
+
+```lua
+require("cc-watcher.watcher").on_change(function(filepath, relpath)
+    local bufnr = vim.fn.bufnr(filepath)
+    if bufnr ~= -1 then
+        local add, del = require("cc-watcher.diff").file_stats(filepath, bufnr)
+        vim.notify(
+            string.format("Claude edited %s (+%d/-%d)", relpath, add, del),
+            vim.log.levels.INFO
+        )
+    end
+end)
+```
+
+### Listening for JSONL updates
+
+```lua
+-- Called when Claude's session log file changes on disk
+require("cc-watcher.session").on_jsonl_change(function(jsonl_path)
+    -- Useful for triggering custom refresh logic
+    print("Session log updated: " .. jsonl_path)
+end)
+```
+
+---
+
+## 13. Lazy Loading
+
+cc-watcher supports three lazy loading strategies. Each has trade-offs.
+
+### Event-based (recommended)
+
+```lua
+event = { "BufReadPost", "BufNewFile" }
+```
+
+The plugin loads when you open any file. This is the recommended approach because it ensures **snapshots are captured early**. If the plugin is not loaded when you first open a file, no snapshot is taken, and later diffs for that file will fall back to git HEAD.
+
+### Command-based
+
+```lua
+cmd = { "ClaudeSidebar", "ClaudeDiff", "ClaudeTelescope", "ClaudeFzf", "ClaudeTrouble", "ClaudeDiffview" }
+```
+
+The plugin loads on first command invocation. Startup is faster, but **files opened before your first command will not have snapshots**. Acceptable if you always open the sidebar early in your session.
+
+### Key-based
+
+```lua
+keys = {
+    { "<leader>cs", function() require("cc-watcher")._ensure_setup(); require("cc-watcher.sidebar").toggle() end, desc = "Claude sidebar" },
+    { "<leader>cd", function() require("cc-watcher")._ensure_setup(); require("cc-watcher.diff").show() end, desc = "Claude inline diff" },
+}
+```
+
+Same trade-off as command-based: loads on first keypress.
+
+### Recommended: combine all three
+
+For the best experience, combine event + cmd + keys. The event trigger ensures snapshots are captured, while cmd and keys provide nice lazy.nvim completions and which-key hints:
+
+```lua
+{
+    "elmomk/cc-watcher.nvim",
+    event = { "BufReadPost", "BufNewFile" },
+    cmd = {
+        "ClaudeSidebar", "ClaudeDiff",
+        "ClaudeTelescope", "ClaudeFzf", "ClaudeTrouble", "ClaudeDiffview",
+    },
+    keys = {
+        { "<leader>cs", desc = "Claude - toggle sidebar" },
+        { "<leader>cd", desc = "Claude - toggle inline diff" },
+    },
+    config = function()
+        require("cc-watcher").setup()
+    end,
+}
+```
+
+The plugin also exports a helper for lazy.nvim specs:
+
+```lua
+local ccw_lazy = require("cc-watcher").lazy
+-- ccw_lazy.cmd, ccw_lazy.keys, ccw_lazy.event are pre-defined
+```
+
+### Caveat
+
+If you use pure `cmd` or `keys` loading (without `event`), any file you open **before** the first trigger will not have a snapshot. Diffs for those files will fall back to git HEAD, which may include your own uncommitted changes in the diff.
+
+---
+
+## 14. Tips and Tricks
+
+**Quick file-by-file review:**
+Open the sidebar (`:ClaudeSidebar`), navigate to each file with `j`/`k`, press `d` to open with diff. Review the hunks with `]c`/`[c`. Revert anything bad with `cr`. Move to the next file.
+
+**Rapid overview of all changes:**
+`:ClaudeTelescope hunks` (or `:ClaudeFzf hunks`) gives you a flat list of every hunk across the entire project. Scan the list, jump to anything interesting.
+
+**Selective revert:**
+Use `cr` (revert hunk) to cherry-pick which changes to keep. If Claude added 5 hunks and one of them is wrong, navigate to it and `cr`. The other 4 hunks stay intact.
+
+**Leave the sidebar open:**
+The sidebar auto-updates as Claude works. Leave it open and glance at it periodically. The `+N/-M` stats tell you how substantial the changes are without having to open each file.
+
+**Statusline for passive awareness:**
+Add the statusline component so you always know how many files Claude has changed, even without the sidebar open.
+
+**Diffview for large reviews:**
+When Claude makes extensive changes across many files, `:ClaudeDiffview` gives you a traditional side-by-side view that is easiest to read for big diffs. Use `]f`/`[f` to flip between files.
+
+**Reset after accepting changes:**
+After you have reviewed and are happy with Claude's work, clear snapshots to reset the baseline:
+
+```lua
+require("cc-watcher.snapshots").clear()
+```
+
+Now any future changes will be diffed against the current state.
+
+**Combine with which-key:**
+cc-watcher automatically registers the `<leader>c` group with which-key if it is installed, showing it as "Claude Code". Your custom keymaps under `<leader>c` will appear in the which-key popup.
+
+---
+
+## 15. Troubleshooting
+
+### "no session" in the sidebar
+
+The plugin cannot find an active Claude Code process for the current working directory.
+
+**Check:**
+- Is Claude Code running? Check with `ps aux | grep claude`.
+- Is it running in the **same directory**? The plugin matches sessions by `cwd`. If Claude was started in `/home/user/project` but Neovim is in `/home/user/project/src`, they will not match.
+- Session files are at `~/.claude/sessions/`. List them to see what is there:
+
+```bash
+ls -la ~/.claude/sessions/
+cat ~/.claude/sessions/*.json  # inspect the cwd and pid fields
+```
+
+### "No snapshot" warnings
+
+A file was changed but never opened in Neovim before Claude edited it. The diff falls back to git HEAD.
+
+**Solutions:**
+- Open files you expect Claude to edit before giving Claude the task.
+- Use the `event = { "BufReadPost", "BufNewFile" }` lazy loading strategy so snapshots are captured automatically when files are opened.
+- Accept the git HEAD fallback -- it is usually close enough.
+
+### Changes not appearing in the sidebar
+
+**Check JSONL files:**
+
+```bash
+ls -la ~/.claude/projects/
+# Find the directory for your project, then:
+ls -la ~/.claude/projects/*/
+```
+
+The plugin needs a `.jsonl` file whose first line contains your project's absolute path. If no matching JSONL exists, session detection will not work.
+
+**Try refreshing:** Press `r` in the sidebar, or close and reopen it.
+
+**Check live detection:** If you have the file open in a buffer, edits should be detected via `fs_event`. If they are not, check that `vim.o.autoread` is `true` (cc-watcher sets this automatically).
+
+### Telescope or fzf-lua commands not working
+
+```
+cc-watcher: telescope integration is disabled. Enable it with integrations.telescope = true
+```
+
+This means the integration is not enabled in your config. Add it:
+
+```lua
+require("cc-watcher").setup({
+    integrations = {
+        telescope = true,  -- or fzf_lua = true
+    },
+})
+```
+
+If you see `telescope.nvim not found` or `fzf-lua not found`, the dependency itself is not installed. Install it separately.
+
+### Statusline showing nothing
+
+The statusline component returns an empty string when there are no changed files. It also returns empty if the plugin has not been initialized yet. Make sure:
+
+1. The plugin is loaded (check with `:lua print(vim.g.loaded_cc_watcher)`).
+2. Claude has actually made changes.
+3. Test it directly: `:lua print(require("cc-watcher").statusline())`.
+
+### Diff shows unexpected changes
+
+If the diff includes changes you made (not Claude), this is the snapshot system working correctly -- it shows everything that changed since the snapshot was taken. If you want to reset the baseline:
+
+```lua
+require("cc-watcher.snapshots").clear()
+```
+
+Then reopen the file. A new snapshot is taken. Future diffs will be relative to this point.
+
+### Performance concerns
+
+cc-watcher uses `libuv fs_event` watchers that consume zero CPU when idle. JSONL parsing is incremental (only new bytes are read). Sidebar refreshes are debounced (300ms for JSONL changes, 500ms for batched notifications). Snapshots use an LRU cache capped at 100 entries.
+
+If you notice lag, check how many files are in the sidebar. A very large number of changed files (hundreds) could slow down sidebar rendering since stats are computed for each loaded buffer.
