@@ -11,16 +11,18 @@ A hands-on guide to monitoring Claude Code changes in real time from inside Neov
 3. [Understanding the Sidebar](#3-understanding-the-sidebar)
 4. [Working with Diffs](#4-working-with-diffs)
 5. [Snapshot-Based Diffing](#5-snapshot-based-diffing-key-concept)
-6. [Telescope Integration](#6-telescope-integration)
-7. [fzf-lua Integration](#7-fzf-lua-integration)
-8. [trouble.nvim Integration](#8-troublenvim-integration)
-9. [Diffview Integration](#9-diffview-integration)
-10. [Statusline Integration](#10-statusline-integration)
-11. [Customization](#11-customization)
-12. [Advanced Usage](#12-advanced-usage)
-13. [Lazy Loading](#13-lazy-loading)
-14. [Tips and Tricks](#14-tips-and-tricks)
-15. [Troubleshooting](#15-troubleshooting)
+6. [Snacks Picker Integration](#6-snacks-picker-integration)
+7. [LazyVim Dashboard Setup](#7-lazyvim-dashboard-setup)
+8. [Telescope Integration](#8-telescope-integration)
+9. [fzf-lua Integration](#9-fzf-lua-integration)
+10. [trouble.nvim Integration](#10-troublenvim-integration)
+11. [Diffview Integration](#11-diffview-integration)
+12. [Statusline Integration](#12-statusline-integration)
+13. [Customization](#13-customization)
+14. [Advanced Usage](#14-advanced-usage)
+15. [Lazy Loading](#15-lazy-loading)
+16. [Tips and Tricks](#16-tips-and-tricks)
+17. [Troubleshooting](#17-troubleshooting)
 
 ---
 
@@ -362,7 +364,131 @@ require("cc-watcher.snapshots").remove(vim.fn.expand("%:p"))
 
 ---
 
-## 6. Telescope Integration
+## 6. Snacks Picker Integration
+
+### Enable
+
+```lua
+require("cc-watcher").setup({
+    integrations = {
+        snacks = true,
+    },
+})
+```
+
+Requires [snacks.nvim](https://github.com/folke/snacks.nvim), which is included by default in LazyVim.
+
+### Changed files picker
+
+```vim
+:ClaudeSnacks
+```
+
+Opens a snacks picker listing all files Claude has changed. Each entry shows:
+
+- `●` / `○` indicator (live vs session)
+- Relative file path (from git root)
+- `+N/-M` stats
+
+The **preview pane** shows a colored unified diff with green highlights for additions and red for deletions.
+
+**Actions:**
+
+| Key | Action |
+|-----|--------|
+| `<CR>` | Open file and activate inline diff (jumps to first change) |
+
+### Hunks picker
+
+```vim
+:ClaudeSnacks hunks
+```
+
+Lists **every individual hunk** across all changed files. The preview shows the file content at the hunk location.
+
+Pressing `<CR>` opens the file, jumps to the hunk line, centers the view, and activates the inline diff.
+
+### Recommended keymaps
+
+```lua
+keys = {
+    { "<leader>ct", "<cmd>ClaudeSnacks<cr>", desc = "Claude - changed files" },
+    { "<leader>ch", "<cmd>ClaudeSnacks hunks<cr>", desc = "Claude - hunks" },
+},
+```
+
+---
+
+## 7. LazyVim Dashboard Setup
+
+If you use LazyVim with the snacks.nvim dashboard (the default startup page), you can add cc-watcher entries so you can jump straight into reviewing Claude's changes when you open Neovim.
+
+### Add to the startup page
+
+Create `~/.config/nvim/lua/plugins/dashboard.lua`:
+
+```lua
+return {
+  "snacks.nvim",
+  opts = {
+    dashboard = {
+      preset = {
+        -- stylua: ignore
+        ---@type snacks.dashboard.Item[]
+        keys = {
+          { icon = " ", key = "f", desc = "Find File", action = ":lua Snacks.dashboard.pick('files')" },
+          { icon = " ", key = "n", desc = "New File", action = ":ene | startinsert" },
+          { icon = " ", key = "g", desc = "Find Text", action = ":lua Snacks.dashboard.pick('live_grep')" },
+          { icon = " ", key = "r", desc = "Recent Files", action = ":lua Snacks.dashboard.pick('oldfiles')" },
+          { icon = " ", key = "c", desc = "Config", action = ":lua Snacks.dashboard.pick('files', {cwd = vim.fn.stdpath('config')})" },
+          { icon = " ", key = "s", desc = "Restore Session", section = "session" },
+          { icon = " ", key = "w", desc = "Claude Changes", action = ":enew | ClaudeSnacks" },
+          { icon = " ", key = "x", desc = "Lazy Extras", action = ":LazyExtras" },
+          { icon = "󰒲 ", key = "l", desc = "Lazy", action = ":Lazy" },
+          { icon = " ", key = "q", desc = "Quit", action = ":qa" },
+        },
+      },
+    },
+  },
+}
+```
+
+Pressing `w` on the startup page opens the snacks changed files picker with a colored diff preview. The `:enew` first dismisses the dashboard so you are left with a clean editor.
+
+### Add statusline indicator
+
+Create `~/.config/nvim/lua/plugins/lualine.lua`:
+
+```lua
+return {
+  "nvim-lualine/lualine.nvim",
+  opts = function(_, opts)
+    table.insert(opts.sections.lualine_x, 1, {
+      function()
+        return require("cc-watcher").statusline()
+      end,
+      cond = function()
+        local ok, watcher = pcall(require, "cc-watcher.watcher")
+        return ok and vim.tbl_count(watcher.get_changed_files()) > 0
+      end,
+    })
+  end,
+}
+```
+
+This shows `󰚩 N` in the statusline when Claude has changed N files, and hides when there are no changes.
+
+### Example workflow with dashboard
+
+1. Claude Code is running in a tmux pane, editing files
+2. Open Neovim — the dashboard appears
+3. Press `w` — the snacks picker opens showing all files Claude changed with diffs
+4. Browse the list, select a file — it opens with inline diff, cursor at the first change
+5. Use `]c`/`[c` to navigate hunks, `cr` to revert any you do not want
+
+---
+
+## 8. Telescope Integration
 
 ### Enable
 
@@ -433,7 +559,7 @@ Pressing `<CR>` opens the file, jumps to the hunk line, centers the view, and ac
 
 ---
 
-## 7. fzf-lua Integration
+## 9. fzf-lua Integration
 
 ### Enable
 
@@ -469,7 +595,7 @@ Both provide the same functionality. Use whichever fuzzy finder you already have
 
 ---
 
-## 8. trouble.nvim Integration
+## 10. trouble.nvim Integration
 
 ### Enable
 
@@ -507,7 +633,7 @@ Click any item to jump directly to that hunk in the file.
 
 ---
 
-## 9. Diffview Integration
+## 11. Diffview Integration
 
 ### Enable
 
@@ -560,7 +686,7 @@ For large changes spanning many files, this is the best way to do a thorough rev
 
 ---
 
-## 10. Statusline Integration
+## 12. Statusline Integration
 
 cc-watcher provides a statusline component that shows the count of changed files.
 
@@ -615,7 +741,7 @@ where `3` is the number of files Claude has changed. The icon is U+F0EA9 (nerd f
 
 ---
 
-## 11. Customization
+## 13. Customization
 
 ### Overriding highlight groups
 
@@ -731,7 +857,7 @@ require("cc-watcher").setup({
 
 ---
 
-## 12. Advanced Usage
+## 14. Advanced Usage
 
 ### Lua API
 
@@ -878,7 +1004,7 @@ end)
 
 ---
 
-## 13. Lazy Loading
+## 15. Lazy Loading
 
 cc-watcher supports three lazy loading strategies. Each has trade-offs.
 
@@ -944,7 +1070,7 @@ If you use pure `cmd` or `keys` loading (without `event`), any file you open **b
 
 ---
 
-## 14. Tips and Tricks
+## 16. Tips and Tricks
 
 **Quick file-by-file review:**
 Open the sidebar (`:ClaudeSidebar`), navigate to each file with `j`/`k`, press `d` to open with diff. Review the hunks with `]c`/`[c`. Revert anything bad with `cr`. Move to the next file.
@@ -978,7 +1104,7 @@ cc-watcher automatically registers the `<leader>c` group with which-key if it is
 
 ---
 
-## 15. Troubleshooting
+## 17. Troubleshooting
 
 ### "no session" in the sidebar
 
