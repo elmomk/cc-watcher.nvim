@@ -165,73 +165,49 @@ local function do_render(session_files)
 		lines[5] = "  Waiting for changes..."
 		hls[#hls + 1] = { 4, "ClaudeInactive" }
 	else
-		-- Group files by directory
-		local groups = {}
-		local group_order = {}
+		-- Flat list: full relative path per line
 		for _, file in ipairs(displayed_files) do
-			local dir, _ = split_path(file.rel)
-			if not groups[dir] then
-				groups[dir] = {}
-				group_order[#group_order + 1] = dir
+			local _, name = split_path(file.rel)
+			local icon, icon_hl = get_icon(name)
+			local indicator = file.live and "●" or "○"
+			local ind_hl = file.live and "ClaudeLive" or "ClaudeSession"
+
+			-- Build the line: "  ● 󰈙 path/to/file.rs       +3 -1"
+			local prefix = "  " .. indicator .. " " .. icon .. " "
+			local add, del, stats = file_stats(file.abs)
+			total_add = total_add + add
+			total_del = total_del + del
+
+			local line = prefix .. file.rel
+			if stats ~= "" then
+				local padding = WIDTH - vim.api.nvim_strwidth(line) - vim.api.nvim_strwidth(stats) - 1
+				if padding > 0 then
+					line = line .. string.rep(" ", padding) .. stats
+				end
 			end
-			groups[dir][#groups[dir] + 1] = file
-		end
 
-		for _, dir in ipairs(group_order) do
-			local ln = #lines
+			table.insert(lines, line)
+			line_to_file[#lines] = file
 
-			-- Directory header (skip for root-level files)
-			if dir ~= "" then
-				table.insert(lines, "  " .. dir)
-				hls[#hls + 1] = { ln, "ClaudeDir" }
-				ln = #lines
+			local cur_ln = #lines - 1
+			-- Indicator highlight
+			hls[#hls + 1] = { cur_ln, ind_hl, 2, 2 + #indicator }
+			-- Icon highlight
+			if icon_hl then
+				local icon_start = 2 + #indicator + 1
+				hls[#hls + 1] = { cur_ln, icon_hl, icon_start, icon_start + #icon }
 			end
-
-			-- Files in this directory
-			for _, file in ipairs(groups[dir]) do
-				local _, name = split_path(file.rel)
-				local icon, icon_hl = get_icon(name)
-				local indicator = file.live and "●" or "○"
-				local ind_hl = file.live and "ClaudeLive" or "ClaudeSession"
-
-				-- Build the line: "  ● 󰈙 filename.rs       +3 -1"
-				local indent = dir ~= "" and "    " or "  "
-				local prefix = indent .. indicator .. " " .. icon .. " "
-				local add, del, stats = file_stats(file.abs)
-				total_add = total_add + add
-				total_del = total_del + del
-
-				local line = prefix .. name
-				if stats ~= "" then
-					local padding = WIDTH - vim.api.nvim_strwidth(line) - vim.api.nvim_strwidth(stats) - 1
-					if padding > 0 then
-						line = line .. string.rep(" ", padding) .. stats
-					end
-				end
-
-				table.insert(lines, line)
-				line_to_file[#lines] = file
-
-				local cur_ln = #lines - 1
-				-- Indicator highlight
-				hls[#hls + 1] = { cur_ln, ind_hl, #indent, #indent + #indicator }
-				-- Icon highlight (if devicons provides one)
-				if icon_hl then
-					local icon_start = #indent + #indicator + 1
-					hls[#hls + 1] = { cur_ln, icon_hl, icon_start, icon_start + #icon }
-				end
-				-- Filename (bold highlight if it's the currently open file)
-				local is_current = current_file and file.abs == current_file
-				if is_current then
-					hls[#hls + 1] = { cur_ln, "ClaudeFileCurrent", 0, -1 }
-					current_file_row = #lines
-				end
-				local file_hl = is_current and "ClaudeFileCurrent" or "ClaudeFile"
-				hls[#hls + 1] = { cur_ln, file_hl, #prefix, #prefix + #name }
-				-- Stats
-				if stats ~= "" then
-					hls[#hls + 1] = { cur_ln, "ClaudeStats", #line - #stats, -1 }
-				end
+			-- Path (bold highlight if it's the currently open file)
+			local is_current = current_file and file.abs == current_file
+			if is_current then
+				hls[#hls + 1] = { cur_ln, "ClaudeFileCurrent", 0, -1 }
+				current_file_row = #lines
+			end
+			local file_hl = is_current and "ClaudeFileCurrent" or "ClaudeFile"
+			hls[#hls + 1] = { cur_ln, file_hl, #prefix, #prefix + #file.rel }
+			-- Stats
+			if stats ~= "" then
+				hls[#hls + 1] = { cur_ln, "ClaudeStats", #line - #stats, -1 }
 			end
 		end
 	end

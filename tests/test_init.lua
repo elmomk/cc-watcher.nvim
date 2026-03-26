@@ -62,7 +62,7 @@ T["init"]["setup() with no args uses all defaults"] = function()
 
 	cc.setup()
 
-	MiniTest.expect.equality(cc.config.sidebar_width, 36)
+	MiniTest.expect.equality(cc.config.sidebar_width, 50)
 	MiniTest.expect.equality(cc.config.keys.toggle_sidebar, "<leader>cs")
 	MiniTest.expect.equality(cc.config.keys.toggle_diff, "<leader>cd")
 	MiniTest.expect.equality(cc.config.integrations.snacks, false)
