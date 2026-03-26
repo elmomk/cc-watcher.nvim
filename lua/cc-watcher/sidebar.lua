@@ -279,15 +279,19 @@ local function do_render(session_files)
 		lines[5] = "  Waiting for changes..."
 		hls[#hls + 1] = { 4, "ClaudeInactive" }
 	else
-		-- Seed latest_changed_file: find the most recently edited file
-		-- (last JSONL entry that appears in displayed_files)
-		if not latest_changed_file and session_files and #session_files > 0 then
-			local displayed_set = {}
-			for _, f in ipairs(displayed_files) do displayed_set[f.abs] = true end
-			for i = #session_files, 1, -1 do
-				if displayed_set[session_files[i]] then
-					latest_changed_file = session_files[i]
-					break
+		-- Ensure latest_changed_file is valid (exists in displayed set)
+		local displayed_set = {}
+		for _, f in ipairs(displayed_files) do displayed_set[f.abs] = true end
+
+		if not latest_changed_file or not displayed_set[latest_changed_file] then
+			-- Re-seed: walk JSONL backwards to find most recent displayed file
+			latest_changed_file = nil
+			if session_files then
+				for i = #session_files, 1, -1 do
+					if displayed_set[session_files[i]] then
+						latest_changed_file = session_files[i]
+						break
+					end
 				end
 			end
 		end
@@ -592,10 +596,6 @@ function M.setup()
 
 	-- Event-driven sidebar refresh on JSONL change
 	session.on_jsonl_change(function()
-		-- Update latest_changed_file from session data
-		session.get_claude_edited_files_async(function(files)
-			if #files > 0 then latest_changed_file = files[#files] end
-		end)
 		if not is_open() then return end
 		jsonl_debounce:stop()
 		jsonl_debounce:start(300, 0, vim.schedule_wrap(function() M.render() end))
