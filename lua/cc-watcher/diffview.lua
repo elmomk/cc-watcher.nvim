@@ -131,6 +131,13 @@ function M.open()
 				if i < 1 or i > #files then return end
 				idx = i
 
+				-- Validate tab still exists
+				local tab_valid = false
+				for _, tp in ipairs(vim.api.nvim_list_tabpages()) do
+					if tp == tab then tab_valid = true; break end
+				end
+				if not tab_valid then return end
+
 				local file = files[idx]
 				local before_buf = create_before_buf(file.abs)
 
