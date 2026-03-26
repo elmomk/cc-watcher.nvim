@@ -7,6 +7,11 @@ local defaults = {
 	keys = {
 		toggle_sidebar = "<leader>cs",
 		toggle_diff = "<leader>cd",
+		snacks_files = "<leader>ct",
+		snacks_hunks = "<leader>ch",
+		trouble = "<leader>cx",
+		diffview = "<leader>cv",
+		flash = "<leader>cf",
 	},
 	integrations = {
 		snacks = false,
@@ -75,6 +80,31 @@ function M.setup(opts)
 			silent = true, desc = "Claude - toggle inline diff",
 		})
 	end
+	if keys.snacks_files then
+		vim.keymap.set("n", keys.snacks_files, "<cmd>ClaudeSnacks<cr>", {
+			silent = true, desc = "Claude - changed files",
+		})
+	end
+	if keys.snacks_hunks then
+		vim.keymap.set("n", keys.snacks_hunks, "<cmd>ClaudeSnacks hunks<cr>", {
+			silent = true, desc = "Claude - hunks",
+		})
+	end
+	if keys.trouble then
+		vim.keymap.set("n", keys.trouble, "<cmd>ClaudeTrouble<cr>", {
+			silent = true, desc = "Claude - trouble",
+		})
+	end
+	if keys.diffview then
+		vim.keymap.set("n", keys.diffview, "<cmd>ClaudeDiffview<cr>", {
+			silent = true, desc = "Claude - diffview",
+		})
+	end
+	if keys.flash then
+		vim.keymap.set("n", keys.flash, "<cmd>ClaudeFlash<cr>", {
+			silent = true, desc = "Claude - flash jump",
+		})
+	end
 
 	-- Hook-based integrations (opt-in, lazy-loaded)
 	local int = M.config.integrations
@@ -125,6 +155,11 @@ M.lazy = {
 	keys = {
 		{ "<leader>cs", function() require("cc-watcher")._ensure_setup(); require("cc-watcher.sidebar").toggle() end, desc = "Claude - toggle sidebar" },
 		{ "<leader>cd", function() require("cc-watcher")._ensure_setup(); require("cc-watcher.diff").show() end, desc = "Claude - toggle inline diff" },
+		{ "<leader>ct", "<cmd>ClaudeSnacks<cr>", desc = "Claude - changed files" },
+		{ "<leader>ch", "<cmd>ClaudeSnacks hunks<cr>", desc = "Claude - hunks" },
+		{ "<leader>cx", "<cmd>ClaudeTrouble<cr>", desc = "Claude - trouble" },
+		{ "<leader>cv", "<cmd>ClaudeDiffview<cr>", desc = "Claude - diffview" },
+		{ "<leader>cf", "<cmd>ClaudeFlash<cr>", desc = "Claude - flash jump" },
 	},
 	event = { "BufReadPost", "BufNewFile" },
 }

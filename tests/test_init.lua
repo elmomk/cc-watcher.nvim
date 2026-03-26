@@ -86,8 +86,8 @@ T["init"]["M.lazy table has expected structure"] = function()
 	MiniTest.expect.equality(cmds["ClaudeTrouble"], true)
 	MiniTest.expect.equality(cmds["ClaudeDiffview"], true)
 
-	-- keys has 2 entries with desc
-	MiniTest.expect.equality(#cc.lazy.keys, 2)
+	-- keys has 7 entries with desc
+	MiniTest.expect.equality(#cc.lazy.keys, 7)
 	MiniTest.expect.equality(type(cc.lazy.keys[1].desc), "string")
 	MiniTest.expect.equality(type(cc.lazy.keys[2].desc), "string")
 

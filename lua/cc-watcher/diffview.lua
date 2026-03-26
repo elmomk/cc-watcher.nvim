@@ -12,7 +12,6 @@ local state = {
 	bufs = {},  -- scratch buffers we created
 }
 
-local keymapped_bufs = {} -- bufnr -> true
 
 --- Collect all files Claude has changed (watcher + session)
 ---@param callback fun(files: { abs: string, rel: string }[])
@@ -124,7 +123,6 @@ function M.open()
 			local tab = vim.api.nvim_get_current_tabpage()
 			state.tabpage = tab
 			state.bufs = {}
-			keymapped_bufs = {}
 
 			-- Start with the first file
 			local idx = 1
@@ -168,10 +166,9 @@ function M.open()
 				vim.api.nvim_win_call(left_win, function() vim.cmd("diffthis") end)
 
 				-- Right: current file
+				vim.api.nvim_set_current_win(right_win)
 				vim.cmd("edit " .. vim.fn.fnameescape(file.abs))
 				local cur_buf = vim.api.nvim_get_current_buf()
-				vim.api.nvim_win_set_buf(right_win, cur_buf)
-				vim.api.nvim_set_current_win(right_win)
 				vim.cmd("diffthis")
 
 				vim.notify(string.format(" [%d/%d] %s", idx, #files, file.rel), vim.log.levels.INFO)
@@ -188,10 +185,9 @@ function M.open()
 					vim.keymap.set("n", "q", function() M.close() end, opts)
 				end
 
-				setup_keys(before_buf) -- always new scratch buf
-				if cur_buf ~= before_buf and not keymapped_bufs[cur_buf] then
+				setup_keys(before_buf)
+				if cur_buf ~= before_buf then
 					setup_keys(cur_buf)
-					keymapped_bufs[cur_buf] = true
 				end
 			end
 
