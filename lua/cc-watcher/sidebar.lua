@@ -207,11 +207,6 @@ end
 local function do_render(session_files)
 	if not is_open() then return end
 
-	-- Seed latest_changed_file from JSONL if not yet set
-	if not latest_changed_file and session_files and #session_files > 0 then
-		latest_changed_file = session_files[#session_files]
-	end
-
 	-- Load history in background (once)
 	load_history(session_files)
 
@@ -284,6 +279,11 @@ local function do_render(session_files)
 		lines[5] = "  Waiting for changes..."
 		hls[#hls + 1] = { 4, "ClaudeInactive" }
 	else
+		-- Seed latest_changed_file from displayed files if not yet set
+		if not latest_changed_file and #displayed_files > 0 then
+			latest_changed_file = displayed_files[#displayed_files].abs
+		end
+
 		-- Flat list: full relative path per line
 		for _, file in ipairs(displayed_files) do
 			local _, name = split_path(file.rel)
