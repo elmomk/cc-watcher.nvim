@@ -267,7 +267,16 @@ function M.get_claude_edited_files_async(callback, cwd)
 		read_jsonl_incremental(jsonl_path, merged.seen, merged.files)
 	end
 
-	callback(merged.files)
+	-- Filter to files inside the project directory
+	local cwd_prefix = cwd .. "/"
+	local filtered = {}
+	for _, fp in ipairs(merged.files) do
+		if fp:sub(1, #cwd_prefix) == cwd_prefix then
+			filtered[#filtered + 1] = fp
+		end
+	end
+
+	callback(filtered)
 end
 
 --- Start watching the active JSONL file for changes
