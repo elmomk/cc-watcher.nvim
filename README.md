@@ -12,14 +12,12 @@ Designed for a **tmux split workflow**: Claude Code on the left, Neovim on the r
 - **Hunk navigation** — `]c` / `[c` to jump between changes, `cr` to revert a hunk
 - **Session awareness** — reads Claude Code's session JSONL to find edited files
 - **File watchers** — instant detection via libuv `fs_event` (zero CPU when idle)
-- **Snapshot-based diff** — compares against file state *before* Claude edited it, not git HEAD
+- **Git HEAD comparison** — compares against git HEAD for accurate diffs, with snapshot fallback for untracked files
 - **Batched notifications** — debounced to avoid spam when Claude edits many files
 - **Lazy loading** — full lazy.nvim support with command/key/event triggers
 - **Pure Lua** — no external dependencies
 - **Integrations** (opt-in):
   - [Snacks picker](#snacks-picker) — fuzzy find changed files and hunks with colored diff preview (for [LazyVim](https://www.lazyvim.org/) / snacks.nvim users)
-  - [Telescope](#telescope) — fuzzy find changed files and hunks with diff preview
-  - [fzf-lua](#fzf-lua) — same pickers for fzf users
   - [trouble.nvim](#troublenvim) — diagnostic-like list of all changes
   - [Diffview](#diffview) — side-by-side snapshot diff in a tab
 
@@ -58,7 +56,7 @@ Designed for a **tmux split workflow**: Claude Code on the left, Neovim on the r
     event = { "BufReadPost", "BufNewFile" },
     cmd = {
         "ClaudeSidebar", "ClaudeDiff",
-        "ClaudeTelescope", "ClaudeFzf", "ClaudeTrouble", "ClaudeDiffview",
+        "ClaudeSnacks", "ClaudeTrouble", "ClaudeDiffview",
     },
     keys = {
         { "<leader>cs", desc = "Claude - toggle sidebar" },
@@ -89,31 +87,6 @@ With snacks picker + all integrations (for LazyVim users):
     opts = {
         integrations = {
             snacks = true,
-            trouble = true,
-            diffview = true,
-        },
-    },
-}
-```
-
-With telescope + all integrations:
-
-```lua
-{
-    "elmomk/cc-watcher.nvim",
-    event = { "BufReadPost", "BufNewFile" },
-    cmd = {
-        "ClaudeSidebar", "ClaudeDiff",
-        "ClaudeTelescope", "ClaudeFzf", "ClaudeTrouble", "ClaudeDiffview",
-    },
-    keys = {
-        { "<leader>cs", desc = "Claude - toggle sidebar" },
-        { "<leader>cd", desc = "Claude - toggle inline diff" },
-    },
-    opts = {
-        integrations = {
-            telescope = true,
-            fzf_lua = true,
             trouble = true,
             diffview = true,
         },
@@ -158,8 +131,6 @@ require("cc-watcher").setup({
     -- Opt-in integrations (require the corresponding plugin to be installed)
     integrations = {
         snacks = false,      -- :ClaudeSnacks (for snacks.nvim / LazyVim users)
-        telescope = false,   -- :ClaudeTelescope, :Telescope cc_watcher
-        fzf_lua = false,     -- :ClaudeFzf
         trouble = false,     -- :ClaudeTrouble
         diffview = false,    -- :ClaudeDiffview
     },
@@ -180,7 +151,7 @@ require("cc-watcher").setup({
 | Key | Action |
 |-----|--------|
 | `<CR>` / `d` | Open file with inline diff |
-| `o` | Open file without diff |
+| `o` | Open file with diff |
 | `r` | Refresh file list |
 | `q` | Close sidebar |
 | `g?` | Show help popup |
@@ -209,8 +180,6 @@ require("cc-watcher").setup({
 | `:ClaudeSidebar` | Toggle the changed files sidebar |
 | `:ClaudeDiff` | Toggle inline diff for current file |
 | `:ClaudeSnacks [changed_files\|hunks]` | Snacks picker for Claude changes |
-| `:ClaudeTelescope [changed_files\|hunks]` | Telescope picker for Claude changes |
-| `:ClaudeFzf [changed_files\|hunks]` | fzf-lua picker for Claude changes |
 | `:ClaudeTrouble` | Open trouble.nvim with Claude changes |
 | `:ClaudeDiffview [file]` | Side-by-side diff view |
 
@@ -229,33 +198,6 @@ opts = { integrations = { snacks = true } }
 - `<CR>` opens file with inline diff and jumps to first change
 
 Requires: [snacks.nvim](https://github.com/folke/snacks.nvim) (included by default in LazyVim)
-
-### Telescope
-
-```lua
-opts = { integrations = { telescope = true } }
-```
-
-- `:ClaudeTelescope` or `:Telescope cc_watcher` — **changed files picker**
-  - Shows indicator (●/○) + file icon + path + diff stats (+N/-M)
-  - Preview pane shows unified diff
-  - `<CR>` opens file with inline diff, multi-select (Tab) supported
-- `:ClaudeTelescope hunks` or `:Telescope cc_watcher hunks` — **hunk picker**
-  - Lists every hunk across all changed files
-  - `<CR>` jumps to hunk location with inline diff
-
-Requires: [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
-
-### fzf-lua
-
-```lua
-opts = { integrations = { fzf_lua = true } }
-```
-
-- `:ClaudeFzf` — changed files with diff preview
-- `:ClaudeFzf hunks` — hunk picker with context preview
-
-Requires: [fzf-lua](https://github.com/ibhagwan/fzf-lua)
 
 ### trouble.nvim
 
@@ -362,7 +304,7 @@ Returns `""` when no changes, or `"󰚩 N"` where N is the count of changed file
 
 2. **File watchers** — for files you've opened, libuv `fs_event` watchers detect changes instantly and auto-reload the buffer.
 
-3. **Snapshots** — when you open a file, its content is stored in memory (LRU cache, max 100 files). Diffs compare against this snapshot, so you see what changed *since you started editing*, not against git.
+3. **Git HEAD comparison** — diffs compare against `git show HEAD:<file>` for accurate results. For untracked files (not in git), snapshots stored in memory (LRU cache, max 100 files) are used as a fallback.
 
 ## Requirements
 
@@ -371,8 +313,6 @@ Returns `""` when no changes, or `"󰚩 N"` where N is the count of changed file
 
 **Optional (for integrations):**
 - [snacks.nvim](https://github.com/folke/snacks.nvim) (included in LazyVim)
-- [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
-- [fzf-lua](https://github.com/ibhagwan/fzf-lua)
 - [trouble.nvim](https://github.com/folke/trouble.nvim) v3
 - [nvim-web-devicons](https://github.com/nvim-tree/nvim-web-devicons) (file icons in sidebar/pickers)
 
@@ -380,6 +320,7 @@ Returns `""` when no changes, or `"󰚩 N"` where N is the count of changed file
 
 - `:help cc-watcher` — full vimdoc reference
 - [`doc/tutorial.md`](doc/tutorial.md) — in-depth hands-on tutorial
+- [`doc/lua-plugin-guide.md`](doc/lua-plugin-guide.md) — Lua plugin development guide
 
 ## Highlight groups
 

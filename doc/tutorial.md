@@ -10,19 +10,17 @@ A hands-on guide to monitoring Claude Code changes in real time from inside Neov
 2. [The Workflow](#2-the-workflow)
 3. [Understanding the Sidebar](#3-understanding-the-sidebar)
 4. [Working with Diffs](#4-working-with-diffs)
-5. [Snapshot-Based Diffing](#5-snapshot-based-diffing-key-concept)
+5. [Git HEAD Diffing](#5-git-head-diffing-key-concept)
 6. [Snacks Picker Integration](#6-snacks-picker-integration)
 7. [LazyVim Dashboard Setup](#7-lazyvim-dashboard-setup)
-8. [Telescope Integration](#8-telescope-integration)
-9. [fzf-lua Integration](#9-fzf-lua-integration)
-10. [trouble.nvim Integration](#10-troublenvim-integration)
-11. [Diffview Integration](#11-diffview-integration)
-12. [Statusline Integration](#12-statusline-integration)
-13. [Customization](#13-customization)
-14. [Advanced Usage](#14-advanced-usage)
-15. [Lazy Loading](#15-lazy-loading)
-16. [Tips and Tricks](#16-tips-and-tricks)
-17. [Troubleshooting](#17-troubleshooting)
+8. [trouble.nvim Integration](#8-troublenvim-integration)
+9. [Diffview Integration](#9-diffview-integration)
+10. [Statusline Integration](#10-statusline-integration)
+11. [Customization](#11-customization)
+12. [Advanced Usage](#12-advanced-usage)
+13. [Lazy Loading](#13-lazy-loading)
+14. [Tips and Tricks](#14-tips-and-tricks)
+15. [Troubleshooting](#15-troubleshooting)
 
 ---
 
@@ -55,7 +53,7 @@ A hands-on guide to monitoring Claude Code changes in real time from inside Neov
     event = { "BufReadPost", "BufNewFile" },
     cmd = {
         "ClaudeSidebar", "ClaudeDiff",
-        "ClaudeTelescope", "ClaudeFzf", "ClaudeTrouble", "ClaudeDiffview",
+        "ClaudeSnacks", "ClaudeTrouble", "ClaudeDiffview",
     },
     keys = {
         { "<leader>cs", desc = "Claude - toggle sidebar" },
@@ -69,8 +67,7 @@ A hands-on guide to monitoring Claude Code changes in real time from inside Neov
                 toggle_diff = "<leader>cd",
             },
             integrations = {
-                telescope = true,   -- requires telescope.nvim
-                fzf_lua = true,     -- requires fzf-lua
+                snacks = true,      -- requires snacks.nvim
                 trouble = true,     -- requires trouble.nvim v3
                 diffview = true,    -- no extra dependency (uses vim diff mode)
             },
@@ -208,7 +205,7 @@ Files are grouped by their parent directory. Root-level files appear without a d
 
 ### Stats
 
-The `+N/-M` next to each file shows how many lines were added and deleted compared to the snapshot (or git HEAD if no snapshot exists). These stats are only computed for files that have a loaded buffer.
+The `+N/-M` next to each file shows how many lines were added and deleted compared to git HEAD (or snapshot fallback for untracked files). These stats are only computed for files that have a loaded buffer.
 
 ### Session status
 
@@ -226,7 +223,7 @@ The `+N/-M` next to each file shows how many lines were added and deleted compar
 | Key | Action |
 |-----|--------|
 | `<CR>` / `d` | Open file in editor pane with inline diff activated |
-| `o` | Open file without diff |
+| `o` | Open file with diff |
 | `r` | Force refresh the file list |
 | `q` | Close the sidebar |
 | `g?` | Show help overlay |
@@ -311,37 +308,29 @@ After reverting, the diff recalculates and reapplies, so hunk navigation stays a
 
 ---
 
-## 5. Snapshot-Based Diffing (Key Concept)
+## 5. Git HEAD Diffing (Key Concept)
 
 This is the single most important concept in cc-watcher. Understanding it prevents confusion.
 
-### Why snapshots, not git diff?
+### How diffs work
 
-Most diff tools compare against `git HEAD`. This is wrong for reviewing AI changes because:
+cc-watcher compares files against `git show HEAD:<file>` to produce diffs. This is the primary comparison method because snapshots taken on `BufReadPost` would capture post-edit content (after Claude has already written the file), making them unreliable as a baseline.
 
-- If **you** edited a file before Claude did, a git diff would show **your** changes mixed with Claude's. You cannot tell who changed what.
-- If Claude's changes are on top of your uncommitted work, reverting a hunk with git data would destroy your work.
-
-cc-watcher takes a different approach: **when you open a file, it stores a snapshot of that file's content**. All diffs are computed against this snapshot.
+Git HEAD provides a stable, known-good reference point that represents the last committed state of each file.
 
 ### How it works
 
-1. You open `src/handlers.rs` in Neovim. cc-watcher stores the file content at that moment.
-2. You make some edits and save. The snapshot still holds the original content.
-3. Claude edits the file. The watcher fires, the buffer reloads.
-4. You activate the diff. It shows changes between the snapshot (step 1) and the current file (after step 3).
+1. Claude edits `src/handlers.rs`. The file watcher fires, the buffer reloads.
+2. You activate the diff. It compares the current file against `git show HEAD:src/handlers.rs`.
+3. The diff shows everything that changed since the last commit, which in the typical workflow is exactly what Claude did.
 
-This means the diff shows **everything that changed since you opened the file**, including both your edits and Claude's. In the typical workflow (you open the file, then Claude edits it), the diff shows exactly what Claude did.
+### Snapshot fallback for untracked files
 
-### Fallback to git HEAD
-
-If you never opened a file before Claude edited it (so no snapshot exists), cc-watcher falls back to `git show HEAD:<file>`. This is a reasonable approximation, but it means uncommitted changes you made before the session will show in the diff.
-
-The sidebar notification "No snapshot for X" appears when this fallback is used.
+For files that are **not tracked by git** (new files Claude created, files outside a git repository), cc-watcher falls back to in-memory snapshots. When you open a file, its content is stored as a snapshot. If git HEAD is not available, the diff compares against this snapshot instead.
 
 ### LRU cache
 
-Snapshots are stored in memory with an LRU eviction policy:
+Snapshots (used as fallback) are stored in memory with an LRU eviction policy:
 
 - **Max 100 files** -- when the 101st file is opened, the least-recently-accessed snapshot is evicted.
 - **Max 10MB per file** -- files larger than 10MB are not snapshotted.
@@ -350,7 +339,7 @@ For most projects, 100 files is far more than you will have open in a session.
 
 ### Clearing snapshots
 
-If you want to reset the baseline (for example, after you have reviewed and accepted Claude's changes and want to start fresh):
+If you want to reset the snapshot baseline (relevant for untracked files):
 
 ```lua
 require("cc-watcher.snapshots").clear()
@@ -488,114 +477,7 @@ This shows `󰚩 N` in the statusline when Claude has changed N files, and hides
 
 ---
 
-## 8. Telescope Integration
-
-### Enable
-
-```lua
-require("cc-watcher").setup({
-    integrations = {
-        telescope = true,
-    },
-})
-```
-
-Requires [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) to be installed.
-
-### Changed files picker
-
-```vim
-:ClaudeTelescope
-" or
-:Telescope cc_watcher
-```
-
-Opens a Telescope picker listing all files Claude has changed. Each entry shows:
-
-- `●` / `○` indicator (live vs session)
-- File icon (if nvim-web-devicons is installed)
-- Relative file path
-- `+N/-M` stats
-
-The **preview pane** shows a unified diff of each file.
-
-**Actions:**
-
-| Key | Action |
-|-----|--------|
-| `<CR>` | Open file and activate inline diff |
-| `<Tab>` | Toggle multi-select |
-| `<CR>` (with multi-select) | Open all selected files (no diff) |
-
-### Hunks picker
-
-```vim
-:ClaudeTelescope hunks
-" or
-:Telescope cc_watcher hunks
-```
-
-Lists **every individual hunk** across all changed files. Each entry shows:
-
-```
-src/handlers.rs:42 -- +5/-2 lines
-src/handlers.rs:87 -- +3/-0 lines
-src/models.rs:15   -- +8/-4 lines
-```
-
-The preview pane shows the file content at the hunk location.
-
-Pressing `<CR>` opens the file, jumps to the hunk line, centers the view, and activates the inline diff.
-
-### Example workflow: quick review
-
-```
-1. :ClaudeTelescope hunks      -- see all hunks at a glance
-2. Browse the list, read previews
-3. <CR> on a suspicious hunk   -- opens file with diff
-4. cr                          -- revert that hunk if it is wrong
-5. <leader>cs                  -- check sidebar for remaining changes
-```
-
----
-
-## 9. fzf-lua Integration
-
-### Enable
-
-```lua
-require("cc-watcher").setup({
-    integrations = {
-        fzf_lua = true,
-    },
-})
-```
-
-Requires [fzf-lua](https://github.com/ibhagwan/fzf-lua) to be installed.
-
-### Changed files
-
-```vim
-:ClaudeFzf
-```
-
-Shows all changed files with `●`/`○` indicators and `+N/-M` stats. The preview pane shows the unified diff. Selecting a file opens it with inline diff.
-
-### Hunks
-
-```vim
-:ClaudeFzf hunks
-```
-
-Lists all hunks across all changed files. The preview shows the file content around each hunk. Selecting a hunk opens the file, jumps to the line, and activates inline diff.
-
-### When to use fzf-lua vs Telescope
-
-Both provide the same functionality. Use whichever fuzzy finder you already have in your config. If you have both, enable both -- the commands are separate (`:ClaudeTelescope` vs `:ClaudeFzf`), so there is no conflict.
-
----
-
-## 10. trouble.nvim Integration
+## 8. trouble.nvim Integration
 
 ### Enable
 
@@ -633,7 +515,7 @@ Click any item to jump directly to that hunk in the file.
 
 ---
 
-## 11. Diffview Integration
+## 9. Diffview Integration
 
 ### Enable
 
@@ -686,7 +568,7 @@ For large changes spanning many files, this is the best way to do a thorough rev
 
 ---
 
-## 12. Statusline Integration
+## 10. Statusline Integration
 
 cc-watcher provides a statusline component that shows the count of changed files.
 
@@ -741,7 +623,7 @@ where `3` is the number of files Claude has changed. The icon is U+F0EA9 (nerd f
 
 ---
 
-## 13. Customization
+## 11. Customization
 
 ### Overriding highlight groups
 
@@ -825,12 +707,12 @@ require("cc-watcher").setup({
     event = { "BufReadPost", "BufNewFile" },
     cmd = {
         "ClaudeSidebar", "ClaudeDiff",
-        "ClaudeTelescope", "ClaudeDiffview",
+        "ClaudeSnacks", "ClaudeDiffview",
     },
     keys = {
         { "<leader>cc", function() require("cc-watcher.sidebar").toggle() end, desc = "Claude sidebar" },
         { "<leader>ci", function() require("cc-watcher.diff").show() end, desc = "Claude inline diff" },
-        { "<leader>ct", "<cmd>ClaudeTelescope hunks<cr>", desc = "Claude hunks (telescope)" },
+        { "<leader>ct", "<cmd>ClaudeSnacks hunks<cr>", desc = "Claude hunks (snacks)" },
         { "<leader>cv", "<cmd>ClaudeDiffview<cr>", desc = "Claude diffview" },
     },
     config = function()
@@ -841,7 +723,7 @@ require("cc-watcher").setup({
                 toggle_diff = false,
             },
             integrations = {
-                telescope = true,
+                snacks = true,
                 diffview = true,
             },
         })
@@ -857,7 +739,7 @@ require("cc-watcher").setup({
 
 ---
 
-## 14. Advanced Usage
+## 12. Advanced Usage
 
 ### Lua API
 
@@ -1004,7 +886,7 @@ end)
 
 ---
 
-## 15. Lazy Loading
+## 13. Lazy Loading
 
 cc-watcher supports three lazy loading strategies. Each has trade-offs.
 
@@ -1014,15 +896,15 @@ cc-watcher supports three lazy loading strategies. Each has trade-offs.
 event = { "BufReadPost", "BufNewFile" }
 ```
 
-The plugin loads when you open any file. This is the recommended approach because it ensures **snapshots are captured early**. If the plugin is not loaded when you first open a file, no snapshot is taken, and later diffs for that file will fall back to git HEAD.
+The plugin loads when you open any file. This is the recommended approach because it ensures **snapshots are captured early** for untracked files and file watchers are registered promptly. Diffs for git-tracked files always use git HEAD regardless of when the plugin loads.
 
 ### Command-based
 
 ```lua
-cmd = { "ClaudeSidebar", "ClaudeDiff", "ClaudeTelescope", "ClaudeFzf", "ClaudeTrouble", "ClaudeDiffview" }
+cmd = { "ClaudeSidebar", "ClaudeDiff", "ClaudeSnacks", "ClaudeTrouble", "ClaudeDiffview" }
 ```
 
-The plugin loads on first command invocation. Startup is faster, but **files opened before your first command will not have snapshots**. Acceptable if you always open the sidebar early in your session.
+The plugin loads on first command invocation. Startup is faster, but **untracked files opened before your first command will not have snapshots**. Git-tracked files are unaffected. Acceptable if you always open the sidebar early in your session.
 
 ### Key-based
 
@@ -1045,7 +927,7 @@ For the best experience, combine event + cmd + keys. The event trigger ensures s
     event = { "BufReadPost", "BufNewFile" },
     cmd = {
         "ClaudeSidebar", "ClaudeDiff",
-        "ClaudeTelescope", "ClaudeFzf", "ClaudeTrouble", "ClaudeDiffview",
+        "ClaudeSnacks", "ClaudeTrouble", "ClaudeDiffview",
     },
     keys = {
         { "<leader>cs", desc = "Claude - toggle sidebar" },
@@ -1066,17 +948,17 @@ local ccw_lazy = require("cc-watcher").lazy
 
 ### Caveat
 
-If you use pure `cmd` or `keys` loading (without `event`), any file you open **before** the first trigger will not have a snapshot. Diffs for those files will fall back to git HEAD, which may include your own uncommitted changes in the diff.
+If you use pure `cmd` or `keys` loading (without `event`), any file you open **before** the first trigger will not have a snapshot. For git-tracked files this is not an issue since git HEAD is always used as the baseline. For untracked files, no snapshot means no diff baseline will be available until the plugin loads.
 
 ---
 
-## 16. Tips and Tricks
+## 14. Tips and Tricks
 
 **Quick file-by-file review:**
 Open the sidebar (`:ClaudeSidebar`), navigate to each file with `j`/`k`, press `d` to open with diff. Review the hunks with `]c`/`[c`. Revert anything bad with `cr`. Move to the next file.
 
 **Rapid overview of all changes:**
-`:ClaudeTelescope hunks` (or `:ClaudeFzf hunks`) gives you a flat list of every hunk across the entire project. Scan the list, jump to anything interesting.
+`:ClaudeSnacks hunks` gives you a flat list of every hunk across the entire project. Scan the list, jump to anything interesting.
 
 **Selective revert:**
 Use `cr` (revert hunk) to cherry-pick which changes to keep. If Claude added 5 hunks and one of them is wrong, navigate to it and `cr`. The other 4 hunks stay intact.
@@ -1104,7 +986,7 @@ cc-watcher automatically registers the `<leader>c` group with which-key if it is
 
 ---
 
-## 17. Troubleshooting
+## 15. Troubleshooting
 
 ### "no session" in the sidebar
 
@@ -1122,12 +1004,12 @@ cat ~/.claude/sessions/*.json  # inspect the cwd and pid fields
 
 ### "No snapshot" warnings
 
-A file was changed but never opened in Neovim before Claude edited it. The diff falls back to git HEAD.
+A file was changed that is not tracked by git, and no snapshot exists. Diffs normally compare against git HEAD. For untracked files, the plugin falls back to in-memory snapshots.
 
 **Solutions:**
-- Open files you expect Claude to edit before giving Claude the task.
+- For git-tracked files, no action needed -- git HEAD is always used as the baseline.
+- For untracked files, open them in Neovim before Claude edits them so a snapshot is captured.
 - Use the `event = { "BufReadPost", "BufNewFile" }` lazy loading strategy so snapshots are captured automatically when files are opened.
-- Accept the git HEAD fallback -- it is usually close enough.
 
 ### Changes not appearing in the sidebar
 
@@ -1145,10 +1027,10 @@ The plugin needs a `.jsonl` file whose first line contains your project's absolu
 
 **Check live detection:** If you have the file open in a buffer, edits should be detected via `fs_event`. If they are not, check that `vim.o.autoread` is `true` (cc-watcher sets this automatically).
 
-### Telescope or fzf-lua commands not working
+### Integration commands not working
 
 ```
-cc-watcher: telescope integration is disabled. Enable it with integrations.telescope = true
+cc-watcher: snacks integration is disabled. Enable it with integrations.snacks = true
 ```
 
 This means the integration is not enabled in your config. Add it:
@@ -1156,12 +1038,12 @@ This means the integration is not enabled in your config. Add it:
 ```lua
 require("cc-watcher").setup({
     integrations = {
-        telescope = true,  -- or fzf_lua = true
+        snacks = true,
     },
 })
 ```
 
-If you see `telescope.nvim not found` or `fzf-lua not found`, the dependency itself is not installed. Install it separately.
+If you see a "not found" error, the dependency itself is not installed. Install it separately.
 
 ### Statusline showing nothing
 
@@ -1173,7 +1055,9 @@ The statusline component returns an empty string when there are no changed files
 
 ### Diff shows unexpected changes
 
-If the diff includes changes you made (not Claude), this is the snapshot system working correctly -- it shows everything that changed since the snapshot was taken. If you want to reset the baseline:
+If the diff includes changes you made (not Claude), this is expected -- diffs compare against git HEAD, so any uncommitted changes (yours and Claude's) will appear. To see only Claude's changes, commit your own work before asking Claude to edit files.
+
+For untracked files that use snapshot fallback, you can reset the baseline:
 
 ```lua
 require("cc-watcher.snapshots").clear()
