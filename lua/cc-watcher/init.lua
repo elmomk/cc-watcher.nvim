@@ -3,7 +3,7 @@
 local M = {}
 
 local defaults = {
-	sidebar_width = 50,
+	sidebar_width = 0.6,
 	keys = {
 		toggle_sidebar = "<leader>cs",
 		toggle_diff = "<leader>cd",

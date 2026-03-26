@@ -26,7 +26,12 @@ local bufenter_debounce = vim.uv.new_timer()
 local pending_changes = {}
 
 local function get_width()
-	return require("cc-watcher").config.sidebar_width or 36
+	local w = require("cc-watcher").config.sidebar_width or 0.6
+	-- If <= 1, treat as percentage of editor width
+	if type(w) == "number" and w <= 1 then
+		return math.floor(vim.o.columns * w)
+	end
+	return w
 end
 
 local function is_open()
