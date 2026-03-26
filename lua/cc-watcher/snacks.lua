@@ -56,10 +56,7 @@ function M.changed_files()
 					local unified = util.compute_unified(old_text, new_text)
 					if unified and unified ~= "" then
 						local lines = vim.split(unified, "\n", { plain = true })
-						vim.bo[ctx.buf].modifiable = true
-						vim.api.nvim_buf_set_lines(ctx.buf, 0, -1, false, lines)
-						vim.bo[ctx.buf].modifiable = false
-						local ns = vim.api.nvim_create_namespace("cc_watcher_diff")
+						local extmarks = {}
 						for i, line in ipairs(lines) do
 							local hl = nil
 							if line:match("^%+") and not line:match("^%+%+%+") then
@@ -70,16 +67,14 @@ function M.changed_files()
 								hl = "ClaudeDiffChange"
 							end
 							if hl then
-								pcall(vim.api.nvim_buf_set_extmark, ctx.buf, ns, i - 1, 0, {
-									line_hl_group = hl,
-								})
+								extmarks[#extmarks + 1] = { row = i, col = 0, line_hl_group = hl }
 							end
 						end
+						ctx.item.preview = { text = table.concat(lines, "\n"), extmarks = extmarks, loc = false }
 					else
-						vim.bo[ctx.buf].modifiable = true
-						vim.api.nvim_buf_set_lines(ctx.buf, 0, -1, false, { "No changes" })
-						vim.bo[ctx.buf].modifiable = false
+						ctx.item.preview = { text = "No changes", loc = false }
 					end
+					Snacks.picker.preview.preview(ctx)
 				end,
 				confirm = function(picker, item)
 					picker:close()
