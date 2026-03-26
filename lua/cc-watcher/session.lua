@@ -267,12 +267,15 @@ function M.get_claude_edited_files_async(callback, cwd)
 		read_jsonl_incremental(jsonl_path, merged.seen, merged.files)
 	end
 
-	-- Filter to files inside the project directory
+	-- Filter to files inside the project directory, excluding .git/ and .claude/
 	local cwd_prefix = cwd .. "/"
 	local filtered = {}
 	for _, fp in ipairs(merged.files) do
 		if fp:sub(1, #cwd_prefix) == cwd_prefix then
-			filtered[#filtered + 1] = fp
+			local rel = fp:sub(#cwd_prefix + 1)
+			if not rel:match("^%.git/") and not rel:match("^%.claude/") then
+				filtered[#filtered + 1] = fp
+			end
 		end
 	end
 

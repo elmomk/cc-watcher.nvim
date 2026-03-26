@@ -38,6 +38,7 @@ end
 
 function M.should_ignore(path)
 	return path:match("/%.git/") ~= nil
+		or path:match("/%.claude/") ~= nil
 		or path:find("/node_modules/", 1, true) ~= nil
 		or path:find("/target/", 1, true) ~= nil
 		or path:match("%.swp$") ~= nil
