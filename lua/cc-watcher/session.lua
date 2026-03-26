@@ -8,25 +8,20 @@ local M = {}
 local sessions_dir = vim.fn.expand("~/.claude/sessions")
 local projects_dir = vim.fn.expand("~/.claude/projects")
 
-local jsonl_dir_cache = { cwd = nil, path = nil, checked_at = 0 }
+local jsonl_dir_cache = { cwd = nil, paths = nil, checked_at = 0 }
 local active_session_cache = { cwd = nil, result = nil, checked_at = 0 }
 
--- Incremental parse state
-local tail = {
-	jsonl_path = nil,
-	offset = 0,
-	seen = {},
-	files = {},
-}
+-- Incremental parse state per JSONL file
+local tails = {} -- jsonl_path -> { offset, seen, files }
+-- Merged result across all JSONL files
+local merged = { cwd = nil, seen = {}, files = {} }
 
 --- Reset internal state (for testing)
 function M._reset()
-	tail.jsonl_path = nil
-	tail.offset = 0
-	tail.seen = {}
-	tail.files = {}
+	tails = {}
+	merged = { cwd = nil, seen = {}, files = {} }
 	jsonl_dir_cache.cwd = nil
-	jsonl_dir_cache.path = nil
+	jsonl_dir_cache.paths = nil
 	jsonl_dir_cache.checked_at = 0
 	active_session_cache.cwd = nil
 	active_session_cache.result = nil
@@ -131,12 +126,13 @@ function M.find_active_session(cwd)
 	return best
 end
 
+--- Find ALL JSONL files for a project (all sessions)
 ---@param cwd string
----@return string|nil
-function M.find_latest_jsonl(cwd)
+---@return string[] paths (newest first)
+function M.find_all_jsonl(cwd)
 	local now = vim.uv.now() / 1000
-	if jsonl_dir_cache.cwd == cwd and jsonl_dir_cache.path and (now - jsonl_dir_cache.checked_at) < 5 then
-		return jsonl_dir_cache.path
+	if jsonl_dir_cache.cwd == cwd and jsonl_dir_cache.paths and (now - jsonl_dir_cache.checked_at) < 5 then
+		return jsonl_dir_cache.paths
 	end
 
 	-- Claude Code encodes project path: /home/user/my_project → -home-user-my-project
@@ -146,70 +142,107 @@ function M.find_latest_jsonl(cwd)
 
 	local handle = vim.uv.fs_scandir(project_dir)
 	if not handle then
-		-- Cache negative result too
 		jsonl_dir_cache.cwd = cwd
-		jsonl_dir_cache.path = nil
+		jsonl_dir_cache.paths = {}
 		jsonl_dir_cache.checked_at = now
-		return nil
+		return {}
 	end
 
-	local best_path, best_mtime = nil, 0
+	local entries = {}
 	while true do
 		local name, typ = vim.uv.fs_scandir_next(handle)
 		if not name then break end
 		if typ == "file" and name:match("%.jsonl$") then
 			local fpath = project_dir .. "/" .. name
 			local stat = vim.uv.fs_stat(fpath)
-			if stat and stat.mtime.sec > best_mtime then
-				best_path = fpath
-				best_mtime = stat.mtime.sec
+			if stat then
+				entries[#entries + 1] = { path = fpath, mtime = stat.mtime.sec }
 			end
 		end
 	end
 
+	-- Sort newest first
+	table.sort(entries, function(a, b) return a.mtime > b.mtime end)
+
+	local paths = {}
+	for _, e in ipairs(entries) do paths[#paths + 1] = e.path end
+
 	jsonl_dir_cache.cwd = cwd
-	jsonl_dir_cache.path = best_path
+	jsonl_dir_cache.paths = paths
 	jsonl_dir_cache.checked_at = now
-	return best_path
+	return paths
 end
 
---- Incremental async read: only reads new bytes since last parse
+--- Backward-compatible: return the latest JSONL path
+---@param cwd string
+---@return string|nil
+function M.find_latest_jsonl(cwd)
+	local paths = M.find_all_jsonl(cwd)
+	return paths[1]
+end
+
+--- Incremental read of a single JSONL file (only new bytes since last parse)
 ---@param jsonl_path string
----@param callback fun(files: string[])
-function M.get_edited_files_async(jsonl_path, callback)
-	-- Reset if different file or file was truncated
+---@param seen table<string, true> shared dedup set (mutated)
+---@param files string[] shared output list (mutated)
+local function read_jsonl_incremental(jsonl_path, seen, files)
 	local stat = vim.uv.fs_stat(jsonl_path)
-	if not stat then
-		callback({})
-		return
+	if not stat then return end
+
+	local t = tails[jsonl_path]
+	if not t or stat.size < t.offset then
+		t = { offset = 0 }
+		tails[jsonl_path] = t
 	end
 
-	if jsonl_path ~= tail.jsonl_path or stat.size < tail.offset then
-		tail = { jsonl_path = jsonl_path, offset = 0, seen = {}, files = {} }
-	end
+	if stat.size == t.offset then return end
 
-	-- Nothing new
-	if stat.size == tail.offset then
-		callback(tail.files)
-		return
-	end
-
-	local bytes_to_read = stat.size - tail.offset
+	local bytes_to_read = stat.size - t.offset
 	local fd = vim.uv.fs_open(jsonl_path, "r", 438)
-	if not fd then
-		callback(tail.files)
-		return
-	end
+	if not fd then return end
 
-	local data = vim.uv.fs_read(fd, bytes_to_read, tail.offset)
+	local data = vim.uv.fs_read(fd, bytes_to_read, t.offset)
 	vim.uv.fs_close(fd)
 
 	if data and #data > 0 then
-		parse_chunk(data, tail.seen, tail.files)
-		tail.offset = stat.size
+		parse_chunk(data, seen, files)
+		t.offset = stat.size
 	end
+end
 
-	callback(tail.files)
+--- Read a single JSONL file with persistent incremental state (backward compat)
+---@param jsonl_path string
+---@param callback fun(files: string[])
+function M.get_edited_files_async(jsonl_path, callback)
+	local t = tails[jsonl_path]
+	if not t then
+		t = { offset = 0, seen = {}, files = {} }
+		tails[jsonl_path] = t
+	end
+	-- Ensure per-path seen/files exist (read_jsonl_incremental uses shared tables,
+	-- but for direct single-file calls we use per-tail storage)
+	if not t.seen then t.seen = {} end
+	if not t.files then t.files = {} end
+
+	local stat = vim.uv.fs_stat(jsonl_path)
+	if not stat then callback(t.files or {}); return end
+	if stat.size < t.offset then
+		t = { offset = 0, seen = {}, files = {} }
+		tails[jsonl_path] = t
+	end
+	if stat.size == t.offset then callback(t.files); return end
+
+	local bytes = stat.size - t.offset
+	local fd = vim.uv.fs_open(jsonl_path, "r", 438)
+	if not fd then callback(t.files); return end
+	local data = vim.uv.fs_read(fd, bytes, t.offset)
+	vim.uv.fs_close(fd)
+
+	if data and #data > 0 then
+		parse_chunk(data, t.seen, t.files)
+		t.offset = stat.size
+	end
+	callback(t.files)
 end
 
 ---@param callback fun(files: string[])
@@ -217,13 +250,24 @@ end
 function M.get_claude_edited_files_async(callback, cwd)
 	cwd = cwd or vim.uv.cwd()
 
-	local jsonl_path = M.find_latest_jsonl(cwd)
-	if not jsonl_path then
+	local paths = M.find_all_jsonl(cwd)
+	if #paths == 0 then
 		callback({})
 		return
 	end
 
-	M.get_edited_files_async(jsonl_path, callback)
+	-- Reset merged state if cwd changed
+	if merged.cwd ~= cwd then
+		merged = { cwd = cwd, seen = {}, files = {} }
+		tails = {}
+	end
+
+	-- Parse all JSONL files incrementally into the shared merged set
+	for _, jsonl_path in ipairs(paths) do
+		read_jsonl_incremental(jsonl_path, merged.seen, merged.files)
+	end
+
+	callback(merged.files)
 end
 
 --- Start watching the active JSONL file for changes
