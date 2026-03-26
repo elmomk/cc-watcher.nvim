@@ -6,11 +6,12 @@ Designed for a **tmux split workflow**: Claude Code on the left, Neovim on the r
 
 ## Features
 
-- **Sidebar** — lists all files Claude has edited, updated live with directory grouping and +N/-M stats
+- **Sidebar** — flat list of all files Claude has edited (full relative paths), updated live with +N/-M stats, 100-column default width
 - **Inline diff** — colored highlights showing exactly what changed (no split windows)
 - **Sign column indicators** — green/yellow/red bars on changed lines
 - **Hunk navigation** — `]c` / `[c` to jump between changes, `cr` to revert a hunk
-- **Session awareness** — reads Claude Code's session JSONL to find edited files
+- **Commit history** — browse past commits where Claude edited files, view commit diffs in the sidebar
+- **Session awareness** — reads all JSONL files for a project (multi-session) to find edited files
 - **File watchers** — instant detection via libuv `fs_event` (zero CPU when idle)
 - **Git HEAD comparison** — compares against git HEAD for accurate diffs, with snapshot fallback for untracked files
 - **Batched notifications** — debounced to avoid spam when Claude edits many files
@@ -28,11 +29,10 @@ Designed for a **tmux split workflow**: Claude Code on the left, Neovim on the r
 │  󰚩 Claude Code     ││                                       │
 │  session active    ││   fn process(data: &str) -> Result {  │
 │────────────────────││ ~   old line that was here            │  ← dim red
-│  src/              ││     let result = parse(data)?;        │  ← yellow (changed)
-│    ● api.rs  +3 -1 ││ +   let new_field = validate(&data);  │  ← green (added)
-│    ● handlers.rs   ││     Ok(result)                        │
-│  ○ models.rs       ││   }                                   │
-│────────────────────││                                       │
+│  ● src/api.rs +3-1 ││     let result = parse(data)?;        │  ← yellow (changed)
+│  ● src/handlers.rs ││ +   let new_field = validate(&data);  │  ← green (added)
+│  ○ models.rs       ││     Ok(result)                        │
+│────────────────────││   }                                   │
 │  3 files  +8 -3    ││                                       │
 │  g? help           ││                                       │
 └────────────────────┘└───────────────────────────────────────┘
@@ -119,13 +119,18 @@ All options with their defaults:
 
 ```lua
 require("cc-watcher").setup({
-    -- Sidebar width in columns
-    sidebar_width = 36,
+    -- Sidebar width in columns (use a fraction like 0.6 for 60% of editor width)
+    sidebar_width = 100,
 
     -- Keymaps (set to false to disable any binding)
     keys = {
         toggle_sidebar = "<leader>cs",
         toggle_diff = "<leader>cd",
+        snacks_files = "<leader>ct",
+        snacks_hunks = "<leader>ch",
+        trouble = "<leader>cx",
+        diffview = "<leader>cv",
+        flash = "<leader>cf",
     },
 
     -- Opt-in integrations (require the corresponding plugin to be installed)
@@ -163,6 +168,11 @@ require("cc-watcher").setup({
 |-----|--------|
 | `<leader>cs` | Toggle sidebar |
 | `<leader>cd` | Toggle inline diff for current file |
+| `<leader>ct` | Snacks changed files picker |
+| `<leader>ch` | Snacks hunks picker |
+| `<leader>cx` | Open trouble.nvim with Claude changes |
+| `<leader>cv` | Open diffview |
+| `<leader>cf` | Flash jump to hunks |
 
 ### Sidebar
 
@@ -170,6 +180,9 @@ require("cc-watcher").setup({
 |-----|--------|
 | `<CR>` / `d` | Open file with inline diff |
 | `o` | Open file with diff |
+| `H` | Toggle commit history mode |
+| `]g` | Next commit (in history mode) |
+| `[g` | Previous commit (in history mode) |
 | `r` | Refresh file list |
 | `q` | Close sidebar |
 | `g?` | Show help popup |
@@ -406,7 +419,7 @@ Returns `""` when no changes, or `"󰚩 N"` where N is the count of changed file
 
 ## How it detects changes
 
-1. **Session JSONL** — reads `~/.claude/projects/*/SESSION_ID.jsonl` to find all `Write`/`Edit` tool calls Claude made. This catches everything, even files you never opened.
+1. **Multi-session JSONL** — reads **all** JSONL files under `~/.claude/projects/*/` for the current project (not just the latest) to find `Write`/`Edit` tool calls Claude made. Files inside `.claude/` are filtered out. Only files inside the project directory with actual uncommitted diffs are shown.
 
 2. **File watchers** — for files you've opened, libuv `fs_event` watchers detect changes instantly and auto-reload the buffer.
 
@@ -455,9 +468,9 @@ All highlights use `default = true` so you can override them in your colorscheme
 | `ClaudeInactive` | grey, italic | No session indicator |
 | `ClaudeLive` | yellow | Live-detected file (●) |
 | `ClaudeSession` | blue | Session-detected file (○) |
-| `ClaudeDir` | grey | Directory group headers |
 | `ClaudeFile` | white | Filenames |
 | `ClaudeFileCurrent` | white, bold, bg | Currently open file in sidebar |
+| `ClaudeFileLatest` | italic, DiagnosticWarn fg | Most recently edited file in sidebar |
 | `ClaudeStats` | dark grey | +N/-M stats |
 | `ClaudeCount` | blue | File count summary |
 | `ClaudeSep` | dark grey | Separator lines |

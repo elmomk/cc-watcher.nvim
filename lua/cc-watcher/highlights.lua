@@ -1,14 +1,10 @@
 -- highlights.lua — All highlight groups, linked to semantic defaults.
 -- Adapts to any colorscheme (dark or light). Users can override any group.
+-- Re-applies on ColorScheme event so fg resolution stays correct.
 
 local M = {}
 
-local defined = false
-
-function M.setup()
-	if defined then return end
-	defined = true
-
+local function apply()
 	local hl = function(name, opts)
 		opts.default = true
 		vim.api.nvim_set_hl(0, name, opts)
@@ -23,14 +19,15 @@ function M.setup()
 	hl("ClaudeLive",     { link = "DiagnosticWarn" })
 	hl("ClaudeSession",  { link = "DiagnosticInfo" })
 	hl("ClaudeDir",      { link = "Directory" })
-	hl("ClaudeFile",        { link = "Normal" })
-	-- Can't use link + bold/italic together, so resolve fg from target groups
+	hl("ClaudeFile",     { link = "Normal" })
+	hl("ClaudeHelp",     { link = "Comment" })
+	hl("ClaudeStats",    { link = "Comment" })
+
+	-- These need resolved fg because link + bold/italic don't combine
 	local normal_fg = vim.api.nvim_get_hl(0, { name = "Normal" }).fg
 	local warn_fg = vim.api.nvim_get_hl(0, { name = "DiagnosticWarn" }).fg
 	hl("ClaudeFileCurrent", { fg = normal_fg, bold = true, underline = true })
-	hl("ClaudeFileLatest",  { fg = warn_fg, italic = true })
-	hl("ClaudeHelp",     { link = "Comment" })
-	hl("ClaudeStats",    { link = "Comment" })
+	hl("ClaudeFileLatest",  { fg = warn_fg or normal_fg, bold = true, italic = true })
 
 	-- Diff inline: link to built-in diff groups
 	hl("ClaudeDiffAdd",        { link = "DiffAdd" })
@@ -40,6 +37,19 @@ function M.setup()
 	hl("ClaudeDiffAddSign",    { link = "Added" })
 	hl("ClaudeDiffChangeSign", { link = "Changed" })
 	hl("ClaudeDiffDeleteSign", { link = "Removed" })
+end
+
+local registered = false
+
+function M.setup()
+	apply()
+
+	if not registered then
+		registered = true
+		vim.api.nvim_create_autocmd("ColorScheme", {
+			callback = apply,
+		})
+	end
 end
 
 return M

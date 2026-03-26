@@ -29,17 +29,20 @@ Code runs on the left and Neovim on the right.
 
 Features:~
 
-- Sidebar showing files Claude has edited (live + session detected)
+- Sidebar showing files Claude has edited (flat list with full
+  relative paths, 100-column default width)
+- Commit history navigation in the sidebar
 - Inline diff highlighting (added/changed/deleted lines with
   virtual text)
 - Sign column indicators (green/yellow/red)
 - Hunk navigation (|]c|/|[c|) and hunk revert (|cr|)
-- Session awareness via Claude Code's JSONL logs
+- Multi-session awareness via Claude Code's JSONL logs (reads all
+  JSONL files for a project)
 - File watchers via libuv fs_event
-- Snapshot-based diffing (compares against pre-Claude state, not
-  git HEAD)
+- Git HEAD comparison with snapshot fallback for untracked files
+- Latest changed file highlight in sidebar
 - Statusline component
-- Integrations: Telescope, fzf-lua, trouble.nvim, diffview
+- Integrations: snacks.nvim, fzf-lua, trouble.nvim, diffview, flash.nvim
 
 Design philosophy:~
 
@@ -117,16 +120,22 @@ Call `setup()` with a table of options. All fields are optional and
 fall back to the defaults shown below.
 >lua
     require("cc-watcher").setup({
-        sidebar_width = 36,
+        sidebar_width = 100,
         keys = {
             toggle_sidebar = "<leader>cs",  -- set to false to disable
             toggle_diff = "<leader>cd",     -- set to false to disable
+            snacks_files = "<leader>ct",    -- snacks changed files picker
+            snacks_hunks = "<leader>ch",    -- snacks hunks picker
+            trouble = "<leader>cx",         -- trouble.nvim
+            diffview = "<leader>cv",        -- diffview
+            flash = "<leader>cf",           -- flash.nvim hunk jump
         },
         integrations = {
-            telescope = false,  -- :ClaudeTelescope, :Telescope cc_watcher
+            snacks = false,     -- :ClaudeSnacks
             fzf_lua = false,    -- :ClaudeFzf
             trouble = false,    -- :ClaudeTrouble
             diffview = false,   -- :ClaudeDiffview
+            flash = false,      -- :ClaudeFlash
         },
     })
 <
@@ -134,8 +143,9 @@ fall back to the defaults shown below.
 Options:~
 
 `sidebar_width`                                  *cc-watcher-sidebar_width*
-    Type: `number`, Default: `36`
-    Width of the sidebar window in columns.
+    Type: `number`, Default: `100`
+    Width of the sidebar window in columns. Can also be a fraction
+    (e.g. `0.6` for 60% of the editor width).
 
 `keys.toggle_sidebar`                     *cc-watcher-keys.toggle_sidebar*
     Type: `string|false`, Default: `"<leader>cs"`
@@ -168,8 +178,8 @@ Options:~
                                                         *:ClaudeSidebar*
 :ClaudeSidebar
     Toggle the sidebar window. The sidebar shows all files that
-    Claude has modified during the current session, grouped by
-    directory, with live/session indicators and per-file stats.
+    Claude has modified as a flat list with full relative paths,
+    live/session indicators, and per-file stats.
 
                                                            *:ClaudeDiff*
 :ClaudeDiff
@@ -223,6 +233,11 @@ GLOBAL MAPPINGS ~
     Key             Action ~
     `<leader>cs`      Toggle sidebar
     `<leader>cd`      Toggle inline diff
+    `<leader>ct`      Snacks changed files picker
+    `<leader>ch`      Snacks hunks picker
+    `<leader>cx`      Open trouble.nvim with Claude changes
+    `<leader>cv`      Open diffview
+    `<leader>cf`      Flash jump to hunks
 
     These can be changed or disabled via |cc-watcher-config|.
 
@@ -234,9 +249,22 @@ SIDEBAR MAPPINGS                                    *cc-watcher-sidebar*
     `<CR>`            Open file with inline diff
     `d`               Open file with inline diff
     `o`               Open file without diff
+    `H`               Toggle commit history mode
+    `]g`              Next commit (in history mode)
+    `[g`              Previous commit (in history mode)
     `r`               Refresh sidebar
     `q`               Close sidebar
     `g?`              Show help popup
+
+HISTORY MODE                                   *cc-watcher-history*
+
+    Press `H` in the sidebar to toggle commit history mode. In this
+    mode, the sidebar shows files from past commits where Claude
+    edited files instead of the current session's uncommitted changes.
+
+    Use `]g` and `[g` to cycle through commits. Opening a file in
+    history mode shows a diff of commit~1 vs commit in a new tab,
+    so you can review what Claude changed in each past commit.
 
 DIFF MAPPINGS                                          *cc-watcher-diff*
 
@@ -387,14 +415,17 @@ heirline or manual use:~
 cc-watcher uses three detection layers to track what Claude Code has
 changed in your project.
 
-Layer 1: Session JSONL ~
+Layer 1: Multi-session JSONL ~
 
-Claude Code writes a JSONL log for each session at:
+Claude Code writes JSONL logs for each session at:
     `~/.claude/projects/<project-hash>/SESSION.jsonl`
 
-cc-watcher reads this file incrementally (seeking to new content
-rather than re-reading the whole file) and parses `Write` and `Edit`
-tool calls to discover which files Claude has modified.
+cc-watcher reads ALL JSONL files for the current project (not just
+the latest), incrementally seeking to new content rather than
+re-reading whole files, and parses `Write` and `Edit` tool calls
+to discover which files Claude has modified. Files inside `.claude/`
+are filtered out. Only files inside the project directory with
+actual uncommitted diffs are shown in the sidebar.
 
 Layer 2: File watchers ~
 
@@ -441,8 +472,9 @@ Sidebar highlights:~
     `ClaudeSep`           dark grey       Separator lines
     `ClaudeLive`          yellow          Live change indicator (●)
     `ClaudeSession`       blue            Session change indicator (○)
-    `ClaudeDir`           grey            Directory group headers
     `ClaudeFile`          white           Filenames
+    `ClaudeFileCurrent`   white, bold, bg Currently open file
+    `ClaudeFileLatest`    italic, warn fg Most recently edited file
     `ClaudeHelp`          dark grey       Help text at bottom
     `ClaudeStats`         dark grey       Per-file +N/-M stats
 

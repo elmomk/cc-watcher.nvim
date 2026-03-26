@@ -10,17 +10,18 @@ A hands-on guide to monitoring Claude Code changes in real time from inside Neov
 2. [The Workflow](#2-the-workflow)
 3. [Understanding the Sidebar](#3-understanding-the-sidebar)
 4. [Working with Diffs](#4-working-with-diffs)
-5. [Git HEAD Diffing](#5-git-head-diffing-key-concept)
-6. [Snacks Picker Integration](#6-snacks-picker-integration)
-7. [LazyVim Dashboard Setup](#7-lazyvim-dashboard-setup)
-8. [trouble.nvim Integration](#8-troublenvim-integration)
-9. [Diffview Integration](#9-diffview-integration)
-10. [Statusline Integration](#10-statusline-integration)
-11. [Customization](#11-customization)
-12. [Advanced Usage](#12-advanced-usage)
-13. [Lazy Loading](#13-lazy-loading)
-14. [Tips and Tricks](#14-tips-and-tricks)
-15. [Troubleshooting](#15-troubleshooting)
+5. [Reviewing Commit History](#5-reviewing-commit-history)
+6. [Git HEAD Diffing](#6-git-head-diffing-key-concept)
+7. [Snacks Picker Integration](#7-snacks-picker-integration)
+8. [LazyVim Dashboard Setup](#8-lazyvim-dashboard-setup)
+9. [trouble.nvim Integration](#9-troublenvim-integration)
+10. [Diffview Integration](#10-diffview-integration)
+11. [Statusline Integration](#11-statusline-integration)
+12. [Customization](#12-customization)
+13. [Advanced Usage](#13-advanced-usage)
+14. [Lazy Loading](#14-lazy-loading)
+15. [Tips and Tricks](#15-tips-and-tricks)
+16. [Troubleshooting](#16-troubleshooting)
 
 ---
 
@@ -61,10 +62,15 @@ A hands-on guide to monitoring Claude Code changes in real time from inside Neov
     },
     config = function()
         require("cc-watcher").setup({
-            sidebar_width = 36,
+            sidebar_width = 100,
             keys = {
                 toggle_sidebar = "<leader>cs",
                 toggle_diff = "<leader>cd",
+                snacks_files = "<leader>ct",
+                snacks_hunks = "<leader>ch",
+                trouble = "<leader>cx",
+                diffview = "<leader>cv",
+                flash = "<leader>cf",
             },
             integrations = {
                 snacks = true,      -- requires snacks.nvim
@@ -144,15 +150,14 @@ As Claude writes files, you will see entries appear in the sidebar in real time:
  Claude Code
   session active
 ────────────────────────────────────
-  src/
-    ● handlers.rs                +12 -3
-    ● models.rs                   +5 -0
+  ● src/handlers.rs              +12 -3
+  ● src/models.rs                 +5 -0
 
   2 files  +17 -3
   g? help
 ```
 
-The `+N/-M` stats update live as the file content changes.
+Files are shown as a flat list with full relative paths. The most recently edited file is highlighted with italic + warning color (`ClaudeFileLatest`). The `+N/-M` stats update live as the file content changes.
 
 **6. Click into files to see inline diffs.**
 
@@ -178,11 +183,9 @@ Open the sidebar with `<leader>cs` or `:ClaudeSidebar`. Here is what you see:
  Claude Code                        <- header
   session active                    <- Claude Code is running here
 ────────────────────────────────────  <- separator
-  src/
-    ● handlers.rs          +12 -3  <- live-detected, 12 added 3 deleted
-    ● models.rs             +5 -0  <- live-detected, 5 added
-  tests/
-    ○ test_handlers.rs      +8 -2  <- session-detected
+  ● src/handlers.rs        +12 -3  <- live-detected, 12 added 3 deleted
+  ● src/models.rs           +5 -0  <- live-detected, 5 added
+  ○ tests/test_handlers.rs  +8 -2  <- session-detected
 
   3 files  +25 -5                   <- summary footer
   g? help                           <- press g? for help overlay
@@ -199,9 +202,9 @@ Live changes are files you had open in Neovim when Claude edited them. The `fs_e
 
 Session changes are files Claude edited that you did **not** have open. The plugin found them by parsing Claude's JSONL session log at `~/.claude/projects/`.
 
-### Directory grouping
+### Flat file list
 
-Files are grouped by their parent directory. Root-level files appear without a directory header. This keeps the sidebar readable when Claude edits files across many directories.
+Files are shown as a flat list with full relative paths (e.g. `src/handlers.rs`), without directory grouping. The most recently edited file is highlighted with italic text and a warning color (`ClaudeFileLatest` highlight group), making it easy to spot what Claude just changed.
 
 ### Stats
 
@@ -216,7 +219,7 @@ The `+N/-M` next to each file shows how many lines were added and deleted compar
 
 **Live detection:** When you open a file in Neovim, cc-watcher registers a `libuv fs_event` watcher on it. If Claude (or anything else) modifies that file on disk, the watcher fires, the buffer auto-reloads (`checktime`), and the file appears in the sidebar with `●`.
 
-**Session detection:** cc-watcher reads Claude Code's JSONL log files from `~/.claude/projects/`. It does incremental tail-reads: only new bytes since the last parse are processed. It looks for `Write` and `Edit` tool calls and extracts the file paths. This catches files Claude edited even if you never opened them.
+**Session detection:** cc-watcher reads **all** Claude Code JSONL log files from `~/.claude/projects/` for the current project (multi-session). It does incremental tail-reads: only new bytes since the last parse are processed. It looks for `Write` and `Edit` tool calls and extracts the file paths. Files inside `.claude/` are filtered out, and only files inside the project directory with actual uncommitted diffs are shown. This catches files Claude edited even if you never opened them.
 
 ### Sidebar keybindings
 
@@ -224,6 +227,9 @@ The `+N/-M` next to each file shows how many lines were added and deleted compar
 |-----|--------|
 | `<CR>` / `d` | Open file in editor pane with inline diff activated |
 | `o` | Open file with diff |
+| `H` | Toggle commit history mode |
+| `]g` | Next commit (in history mode) |
+| `[g` | Previous commit (in history mode) |
 | `r` | Force refresh the file list |
 | `q` | Close the sidebar |
 | `g?` | Show help overlay |
@@ -308,7 +314,40 @@ After reverting, the diff recalculates and reapplies, so hunk navigation stays a
 
 ---
 
-## 5. Git HEAD Diffing (Key Concept)
+## 5. Reviewing Commit History
+
+The sidebar supports a **commit history mode** that lets you browse past commits where Claude edited files. This is useful for reviewing what Claude did across multiple interactions.
+
+### Entering history mode
+
+With the sidebar open, press `H` to toggle commit history mode. The sidebar switches from showing current uncommitted changes to showing files from a past commit where Claude made edits.
+
+### Navigating commits
+
+| Key | Action |
+|-----|--------|
+| `H` | Toggle history mode on/off |
+| `]g` | Jump to the next (newer) commit |
+| `[g` | Jump to the previous (older) commit |
+
+The sidebar header updates to show which commit you are viewing.
+
+### Viewing commit diffs
+
+When you open a file in history mode (press `<CR>` or `d` on a file), a new tab opens showing a diff of **commit~1 vs commit** -- that is, what changed in that specific commit. This lets you review exactly what Claude did in each past commit without affecting your working tree.
+
+### Example workflow
+
+1. Open the sidebar: `<leader>cs`
+2. Press `H` to enter history mode
+3. Use `[g` to go back to an earlier commit
+4. Press `<CR>` on a file to see what Claude changed in that commit
+5. Use `]g`/`[g` to browse through other commits
+6. Press `H` again to return to the live view of uncommitted changes
+
+---
+
+## 6. Git HEAD Diffing (Key Concept)
 
 This is the single most important concept in cc-watcher. Understanding it prevents confusion.
 
@@ -353,7 +392,7 @@ require("cc-watcher.snapshots").remove(vim.fn.expand("%:p"))
 
 ---
 
-## 6. Snacks Picker Integration
+## 7. Snacks Picker Integration
 
 ### Enable
 
@@ -408,7 +447,7 @@ keys = {
 
 ---
 
-## 7. LazyVim Dashboard Setup
+## 8. LazyVim Dashboard Setup
 
 If you use LazyVim with the snacks.nvim dashboard (the default startup page), you can add cc-watcher entries so you can jump straight into reviewing Claude's changes when you open Neovim.
 
@@ -477,7 +516,7 @@ This shows `󰚩 N` in the statusline when Claude has changed N files, and hides
 
 ---
 
-## 8. trouble.nvim Integration
+## 9. trouble.nvim Integration
 
 ### Enable
 
@@ -515,7 +554,7 @@ Click any item to jump directly to that hunk in the file.
 
 ---
 
-## 9. Diffview Integration
+## 10. Diffview Integration
 
 ### Enable
 
@@ -568,7 +607,7 @@ For large changes spanning many files, this is the best way to do a thorough rev
 
 ---
 
-## 10. Statusline Integration
+## 11. Statusline Integration
 
 cc-watcher provides a statusline component that shows the count of changed files.
 
@@ -623,7 +662,7 @@ where `3` is the number of files Claude has changed. The icon is U+F0EA9 (nerd f
 
 ---
 
-## 11. Customization
+## 12. Customization
 
 ### Overriding highlight groups
 
@@ -660,8 +699,9 @@ Full list of highlight groups:
 | `ClaudeInactive` | grey, italic | "no session" text |
 | `ClaudeLive` | yellow | `●` indicator |
 | `ClaudeSession` | blue | `○` indicator |
-| `ClaudeDir` | grey | Directory names in sidebar |
 | `ClaudeFile` | light text | File names in sidebar |
+| `ClaudeFileCurrent` | white, bold, bg | Currently open file in sidebar |
+| `ClaudeFileLatest` | italic, DiagnosticWarn fg | Most recently edited file |
 | `ClaudeStats` | dim | `+N -M` stats text |
 | `ClaudeCount` | blue | Footer summary line |
 | `ClaudeSep` | dark | Separator lines |
@@ -689,13 +729,13 @@ vim.keymap.set("n", "<leader>ci", function()
 end, { desc = "Claude inline diff" })
 ```
 
-The sidebar-local keybindings (`<CR>`, `d`, `o`, `r`, `q`, `g?`) and diff-local keybindings (`]c`, `[c`, `cr`) are always set on their respective buffers and cannot be changed through config. To override them, set up autocommands on the `claude-sidebar` filetype.
+The sidebar-local keybindings (`<CR>`, `d`, `o`, `H`, `]g`, `[g`, `r`, `q`, `g?`) and diff-local keybindings (`]c`, `[c`, `cr`) are always set on their respective buffers and cannot be changed through config. To override them, set up autocommands on the `claude-sidebar` filetype.
 
 ### Sidebar width
 
 ```lua
 require("cc-watcher").setup({
-    sidebar_width = 40,  -- default is 36
+    sidebar_width = 100,  -- default is 100 (use a fraction like 0.6 for 60%)
 })
 ```
 
@@ -717,7 +757,7 @@ require("cc-watcher").setup({
     },
     config = function()
         require("cc-watcher").setup({
-            sidebar_width = 40,
+            sidebar_width = 100,
             keys = {
                 toggle_sidebar = false,
                 toggle_diff = false,
@@ -739,7 +779,7 @@ require("cc-watcher").setup({
 
 ---
 
-## 12. Advanced Usage
+## 13. Advanced Usage
 
 ### Lua API
 
@@ -886,7 +926,7 @@ end)
 
 ---
 
-## 13. Lazy Loading
+## 14. Lazy Loading
 
 cc-watcher supports three lazy loading strategies. Each has trade-offs.
 
@@ -952,7 +992,7 @@ If you use pure `cmd` or `keys` loading (without `event`), any file you open **b
 
 ---
 
-## 14. Tips and Tricks
+## 15. Tips and Tricks
 
 **Quick file-by-file review:**
 Open the sidebar (`:ClaudeSidebar`), navigate to each file with `j`/`k`, press `d` to open with diff. Review the hunks with `]c`/`[c`. Revert anything bad with `cr`. Move to the next file.
@@ -968,6 +1008,9 @@ The sidebar auto-updates as Claude works. Leave it open and glance at it periodi
 
 **Statusline for passive awareness:**
 Add the statusline component so you always know how many files Claude has changed, even without the sidebar open.
+
+**Review past Claude commits:**
+Press `H` in the sidebar to enter history mode and browse through past commits where Claude made changes. Use `]g`/`[g` to step through commits. Opening a file shows the commit diff in a new tab.
 
 **Diffview for large reviews:**
 When Claude makes extensive changes across many files, `:ClaudeDiffview` gives you a traditional side-by-side view that is easiest to read for big diffs. Use `]f`/`[f` to flip between files.
@@ -986,7 +1029,7 @@ cc-watcher automatically registers the `<leader>c` group with which-key if it is
 
 ---
 
-## 15. Troubleshooting
+## 16. Troubleshooting
 
 ### "no session" in the sidebar
 
