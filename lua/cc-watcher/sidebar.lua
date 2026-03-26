@@ -16,6 +16,11 @@ local HEADER_LINES = 3 -- title, status, separator
 local displayed_files = {}
 local line_to_file = {} -- line number -> file entry, rebuilt each render
 local latest_changed_file = nil -- abs path of most recently changed file
+
+-- History state
+local history_commits = {} -- { { hash, short, subject, files = { rel, ... } }, ... }
+local history_idx = 0 -- 0 = current/uncommitted, 1+ = index into history_commits
+local history_loaded = false
 local ns = vim.api.nvim_create_namespace("claude_sidebar")
 local augroup = vim.api.nvim_create_augroup("ClaudeSidebar", { clear = true })
 
@@ -124,6 +129,81 @@ local function file_stats(filepath)
 	return 0, 0, ""
 end
 
+--- Load commit history, cross-referencing with JSONL session files
+local function load_history(session_files)
+	if history_loaded then return end
+	history_loaded = true
+
+	local cwd = vim.uv.cwd()
+	if not cwd then return end
+
+	-- Build set of files Claude has edited (from JSONL)
+	local claude_files = {}
+	for _, fp in ipairs(session_files or {}) do
+		local rel = util.relpath(fp, cwd)
+		claude_files[rel] = true
+	end
+	if vim.tbl_count(claude_files) == 0 then return end
+
+	-- Get recent commits with their changed files
+	local log = vim.fn.systemlist("git log --pretty=format:'%h|%s' --name-only -50 2>/dev/null")
+	if vim.v.shell_error ~= 0 then return end
+
+	local commits = {}
+	local current = nil
+	for _, line in ipairs(log) do
+		local hash, subject = line:match("^'?([a-f0-9]+)|(.+)'?$")
+		if hash then
+			current = { hash = hash, subject = subject, files = {} }
+			commits[#commits + 1] = current
+		elseif current and line ~= "" then
+			current.files[#current.files + 1] = line
+		end
+	end
+
+	-- Filter to commits that touched Claude-edited files
+	history_commits = {}
+	for _, c in ipairs(commits) do
+		local claude_count = 0
+		for _, f in ipairs(c.files) do
+			if claude_files[f] then claude_count = claude_count + 1 end
+		end
+		if claude_count > 0 then
+			history_commits[#history_commits + 1] = c
+		end
+	end
+end
+
+--- Get files and stats for a historical commit
+local function commit_files(commit_hash)
+	local cwd = vim.uv.cwd()
+	local lines = vim.fn.systemlist("git diff-tree --no-commit-id --name-only -r " .. commit_hash .. " 2>/dev/null")
+	if vim.v.shell_error ~= 0 then return {} end
+
+	local files = {}
+	for _, rel in ipairs(lines) do
+		if rel ~= "" then
+			files[#files + 1] = { abs = cwd .. "/" .. rel, rel = rel, live = false }
+		end
+	end
+	table.sort(files, function(a, b) return a.rel < b.rel end)
+	return files
+end
+
+--- Compute stats for a file in a historical commit
+local function commit_file_stats(commit_hash, rel)
+	local output = vim.fn.systemlist("git diff " .. commit_hash .. "~1.." .. commit_hash .. " --numstat -- " .. vim.fn.shellescape(rel) .. " 2>/dev/null")
+	if vim.v.shell_error ~= 0 or #output == 0 then return 0, 0, "" end
+	local add, del = output[1]:match("^(%d+)%s+(%d+)")
+	if add and del then
+		add, del = tonumber(add), tonumber(del)
+		if add > 0 or del > 0 then
+			return add, del, "+" .. add .. " -" .. del
+		end
+	end
+	return 0, 0, ""
+end
+
 local function do_render(session_files)
 	if not is_open() then return end
 
@@ -132,8 +212,10 @@ local function do_render(session_files)
 		latest_changed_file = session_files[#session_files]
 	end
 
+	-- Load history in background (once)
+	load_history(session_files)
+
 	local WIDTH = get_width()
-	displayed_files = collect_files(session_files)
 	line_to_file = {}
 
 	-- Find the file open in the main editor window
@@ -154,22 +236,48 @@ local function do_render(session_files)
 	local total_add, total_del = 0, 0
 	local current_file_row = nil
 
+	-- Determine which files to show: current or history
+	local viewing_commit = nil
+	if history_idx > 0 and history_idx <= #history_commits then
+		viewing_commit = history_commits[history_idx]
+		displayed_files = commit_files(viewing_commit.hash)
+	else
+		displayed_files = collect_files(session_files)
+	end
+
 	-- Header
 	lines[1] = " 󰚩 Claude Code"
 	hls[#hls + 1] = { 0, "ClaudeHeader" }
 
-	local cwd = vim.uv.cwd()
-	local active = session.find_active_session(cwd)
-	if active then
-		lines[2] = "  session active"
-		hls[#hls + 1] = { 1, "ClaudeActive" }
+	if viewing_commit then
+		-- History mode header
+		local label = "  " .. viewing_commit.hash .. " " .. viewing_commit.subject
+		if #label > WIDTH then label = label:sub(1, WIDTH - 1) .. "…" end
+		lines[2] = label
+		hls[#hls + 1] = { 1, "ClaudeSession" }
 	else
-		lines[2] = "  no session"
-		hls[#hls + 1] = { 1, "ClaudeInactive" }
+		local cwd = vim.uv.cwd()
+		local active = session.find_active_session(cwd)
+		if active then
+			lines[2] = "  session active"
+			hls[#hls + 1] = { 1, "ClaudeActive" }
+		else
+			lines[2] = "  no session"
+			hls[#hls + 1] = { 1, "ClaudeInactive" }
+		end
 	end
 
-	lines[3] = get_separator(WIDTH)
-	hls[#hls + 1] = { 2, "ClaudeSep" }
+	-- History navigation hint
+	if #history_commits > 0 then
+		local nav = viewing_commit
+			and ("  [" .. history_idx .. "/" .. #history_commits .. "]  ]g/[g nav  H back")
+			or ("  " .. #history_commits .. " commits  H history")
+		lines[3] = nav
+		hls[#hls + 1] = { 2, "ClaudeHelp" }
+	else
+		lines[3] = get_separator(WIDTH)
+		hls[#hls + 1] = { 2, "ClaudeSep" }
+	end
 
 	if #displayed_files == 0 then
 		lines[4] = ""
@@ -180,12 +288,23 @@ local function do_render(session_files)
 		for _, file in ipairs(displayed_files) do
 			local _, name = split_path(file.rel)
 			local icon, icon_hl = get_icon(name)
-			local indicator = file.live and "●" or "○"
-			local ind_hl = file.live and "ClaudeLive" or "ClaudeSession"
 
-			-- Build the line: "  ● 󰈙 path/to/file.rs       +3 -1"
+			local indicator, ind_hl
+			if viewing_commit then
+				indicator = "◆"
+				ind_hl = "ClaudeSession"
+			else
+				indicator = file.live and "●" or "○"
+				ind_hl = file.live and "ClaudeLive" or "ClaudeSession"
+			end
+
 			local prefix = "  " .. indicator .. " " .. icon .. " "
-			local add, del, stats = file_stats(file.abs)
+			local add, del, stats
+			if viewing_commit then
+				add, del, stats = commit_file_stats(viewing_commit.hash, file.rel)
+			else
+				add, del, stats = file_stats(file.abs)
+			end
 			total_add = total_add + add
 			total_del = total_del + del
 
@@ -210,7 +329,7 @@ local function do_render(session_files)
 			end
 			-- Path highlights: current file > latest changed > normal
 			local is_current = current_file and file.abs == current_file
-			local is_latest = latest_changed_file and file.abs == latest_changed_file
+			local is_latest = not viewing_commit and latest_changed_file and file.abs == latest_changed_file
 			if is_current then
 				hls[#hls + 1] = { cur_ln, "ClaudeFileCurrent", 0, -1 }
 				current_file_row = #lines
@@ -285,6 +404,8 @@ local function show_help()
 		"│  Sidebar:                      │",
 		"│    <CR>/d/o Open file with diff │",
 		"│    r       Refresh             │",
+		"│    H       Toggle history      │",
+		"│    ]g/[g   Next/prev commit    │",
 		"│    q       Close sidebar       │",
 		"│    g?      Toggle help         │",
 		"│                                │",
@@ -366,16 +487,57 @@ function M.open()
 			vim.cmd("wincmd v")
 		end
 		vim.cmd("wincmd p")
-		vim.cmd("edit " .. vim.fn.fnameescape(f.abs))
-		require("cc-watcher.diff").show(f.abs, { jump = true })
+
+		if history_idx > 0 and history_idx <= #history_commits then
+			-- History mode: open diffview for this commit's version
+			local commit = history_commits[history_idx]
+			local dv_ok, dv = pcall(require, "cc-watcher.diffview")
+			if dv_ok then
+				dv.open_commit_file(commit.hash, f.abs)
+			else
+				vim.cmd("edit " .. vim.fn.fnameescape(f.abs))
+				vim.notify("Commit " .. commit.hash .. ": " .. f.rel, vim.log.levels.INFO)
+			end
+		else
+			vim.cmd("edit " .. vim.fn.fnameescape(f.abs))
+			require("cc-watcher.diff").show(f.abs, { jump = true })
+		end
 	end
 
 	vim.keymap.set("n", "<CR>", open_with_diff, opts)
 	vim.keymap.set("n", "d", open_with_diff, opts)
 	vim.keymap.set("n", "o", open_with_diff, opts)
-	vim.keymap.set("n", "r", function() M.render() end, opts)
+	vim.keymap.set("n", "r", function()
+		history_loaded = false -- force reload
+		M.render()
+	end, opts)
 	vim.keymap.set("n", "q", function() M.close() end, opts)
 	vim.keymap.set("n", "g?", show_help, opts)
+
+	-- History navigation
+	vim.keymap.set("n", "H", function()
+		if history_idx == 0 and #history_commits > 0 then
+			history_idx = 1
+		else
+			history_idx = 0
+		end
+		M.render()
+	end, opts)
+	vim.keymap.set("n", "]g", function()
+		if history_idx > 0 and history_idx < #history_commits then
+			history_idx = history_idx + 1
+			M.render()
+		end
+	end, opts)
+	vim.keymap.set("n", "[g", function()
+		if history_idx > 1 then
+			history_idx = history_idx - 1
+			M.render()
+		elseif history_idx == 1 then
+			history_idx = 0
+			M.render()
+		end
+	end, opts)
 
 	M.render()
 	vim.cmd("wincmd p")

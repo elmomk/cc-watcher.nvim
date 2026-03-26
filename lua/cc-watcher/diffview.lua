@@ -56,6 +56,53 @@ local function create_before_buf(filepath)
 	return buf
 end
 
+--- Open a side-by-side diff for a file at a specific commit
+---@param commit string git commit hash
+---@param filepath string absolute path
+function M.open_commit_file(commit, filepath)
+	filepath = vim.fn.fnamemodify(filepath, ":p")
+	local rel = relpath(filepath)
+	local git_rel = require("cc-watcher.util").git_relpath(filepath)
+	if not git_rel then git_rel = rel end
+
+	-- Get "before" (commit~1) and "after" (commit) versions
+	local before = vim.fn.systemlist("git show " .. commit .. "~1:" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
+	local after = vim.fn.systemlist("git show " .. commit .. ":" .. vim.fn.shellescape(git_rel) .. " 2>/dev/null")
+
+	-- Create scratch buffers
+	local before_buf = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_buf_set_lines(before_buf, 0, -1, false, vim.v.shell_error == 0 and before or {})
+	vim.bo[before_buf].buftype = "nofile"
+	vim.bo[before_buf].bufhidden = "wipe"
+	vim.bo[before_buf].modifiable = false
+	local ft = vim.filetype.match({ filename = filepath })
+	if ft then vim.bo[before_buf].filetype = ft end
+	pcall(vim.api.nvim_buf_set_name, before_buf, "claude://" .. rel .. " (" .. commit .. "~1)")
+
+	local after_buf = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_buf_set_lines(after_buf, 0, -1, false, after or {})
+	vim.bo[after_buf].buftype = "nofile"
+	vim.bo[after_buf].bufhidden = "wipe"
+	vim.bo[after_buf].modifiable = false
+	if ft then vim.bo[after_buf].filetype = ft end
+	pcall(vim.api.nvim_buf_set_name, after_buf, "claude://" .. rel .. " (" .. commit .. ")")
+
+	-- Open in tab with diff
+	vim.cmd("tabnew")
+	local tab = vim.api.nvim_get_current_tabpage()
+	vim.api.nvim_win_set_buf(0, before_buf)
+	vim.cmd("diffthis")
+	vim.cmd("vertical rightbelow split")
+	vim.api.nvim_win_set_buf(0, after_buf)
+	vim.cmd("diffthis")
+
+	state.tabpage = tab
+	state.bufs = { before_buf, after_buf }
+
+	vim.keymap.set("n", "q", function() M.close() end, { buffer = before_buf, nowait = true, silent = true })
+	vim.keymap.set("n", "q", function() M.close() end, { buffer = after_buf, nowait = true, silent = true })
+end
+
 --- Open a side-by-side diff for a single file (snapshot vs current)
 ---@param filepath string absolute path
 function M.open_file(filepath)
