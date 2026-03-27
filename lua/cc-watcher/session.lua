@@ -18,6 +18,9 @@ local tails = {} -- jsonl_path -> { offset, seen, files }
 -- Merged result across all JSONL files
 local merged = { cwd = nil, seen = {}, files = {} }
 
+-- Session filter: nil = all sessions, string = specific sessionId
+local session_filter = nil
+
 --- Reset internal state (for testing)
 function M._reset()
 	tails = {}
@@ -28,6 +31,7 @@ function M._reset()
 	active_session_cache.cwd = nil
 	active_session_cache.result = nil
 	active_session_cache.checked_at = 0
+	session_filter = nil
 end
 
 -- JSONL file watcher
@@ -252,7 +256,14 @@ end
 function M.get_claude_edited_files_async(callback, cwd)
 	cwd = cwd or vim.uv.cwd()
 
-	local paths = M.find_all_jsonl(cwd)
+	local paths
+	if session_filter then
+		local encoded = cwd:gsub("[/_]", "-")
+		local jsonl = projects_dir .. "/" .. encoded .. "/" .. session_filter .. ".jsonl"
+		paths = vim.uv.fs_stat(jsonl) and { jsonl } or {}
+	else
+		paths = M.find_all_jsonl(cwd)
+	end
 	if #paths == 0 then
 		callback({})
 		return
@@ -284,6 +295,111 @@ function M.get_claude_edited_files_async(callback, cwd)
 	callback(filtered)
 end
 
+--- Extract the first user message from a JSONL file (used as session label)
+---@param jsonl_path string
+---@return string
+local function get_session_label(jsonl_path)
+	local fd = vim.uv.fs_open(jsonl_path, "r", require("cc-watcher.util").READ_MODE)
+	if not fd then return "" end
+	local data = vim.uv.fs_read(fd, 16384, 0)
+	vim.uv.fs_close(fd)
+	if not data then return "" end
+
+	for line in data:gmatch("[^\n]+") do
+		if line:find('"role":"user"', 1, true) then
+			local ok, entry = pcall(vim.json.decode, line)
+			if ok and entry and entry.message and entry.message.role == "user" then
+				local content = entry.message.content
+				local text
+				if type(content) == "string" then
+					text = content
+				elseif type(content) == "table" then
+					for _, block in ipairs(content) do
+						if type(block) == "table" and block.type == "text" and block.text then
+							text = block.text
+							break
+						end
+					end
+				end
+				if text then
+					return text:sub(1, 80):gsub("[%c]", " ")
+				end
+			end
+		end
+	end
+	return ""
+end
+
+--- Find ALL active sessions for a cwd (not just the most recent)
+---@param cwd string
+---@return { pid: number, sessionId: string, cwd: string, startedAt: number, label: string }[]
+function M.find_all_active_sessions(cwd)
+	local handle = vim.uv.fs_scandir(sessions_dir)
+	if not handle then return {} end
+
+	local results = {}
+	local encoded = cwd:gsub("[/_]", "-")
+	while true do
+		local name, typ = vim.uv.fs_scandir_next(handle)
+		if not name then break end
+		if typ == "file" and name:match("%.json$") then
+			local path = sessions_dir .. "/" .. name
+			local fd = vim.uv.fs_open(path, "r", require("cc-watcher.util").READ_MODE)
+			if fd then
+				local stat = vim.uv.fs_fstat(fd)
+				if stat and stat.size < MAX_SESSION_FILE_SIZE then
+					local data = vim.uv.fs_read(fd, stat.size, 0)
+					vim.uv.fs_close(fd)
+					if data then
+						local ok, sess = pcall(vim.json.decode, data)
+						if ok and sess and sess.cwd == cwd and sess.pid then
+							local pid = tonumber(sess.pid)
+							if pid and pid > 0 and vim.uv.kill(pid, 0) == 0 then
+								local jsonl = projects_dir .. "/" .. encoded .. "/" .. sess.sessionId .. ".jsonl"
+								local label = get_session_label(jsonl)
+								results[#results + 1] = {
+									pid = pid,
+									sessionId = sess.sessionId,
+									cwd = sess.cwd,
+									startedAt = sess.startedAt or 0,
+									label = label,
+								}
+							end
+						end
+					end
+				else
+					vim.uv.fs_close(fd)
+				end
+			end
+		end
+	end
+
+	-- Sort newest first
+	table.sort(results, function(a, b) return a.startedAt > b.startedAt end)
+	return results
+end
+
+--- Set session filter to a specific sessionId
+---@param session_id string
+function M.set_session_filter(session_id)
+	session_filter = session_id
+	merged = { cwd = nil, seen = {}, files = {} }
+	tails = {}
+end
+
+--- Clear session filter (show all sessions)
+function M.clear_session_filter()
+	session_filter = nil
+	merged = { cwd = nil, seen = {}, files = {} }
+	tails = {}
+end
+
+--- Get current session filter
+---@return string|nil
+function M.get_session_filter()
+	return session_filter
+end
+
 --- Start watching the active JSONL file for changes
 ---@param cwd string|nil
 function M.watch_jsonl(cwd)
@@ -294,7 +410,14 @@ function M.watch_jsonl(cwd)
 	end
 
 	cwd = cwd or vim.uv.cwd()
-	local path = M.find_latest_jsonl(cwd)
+	local path
+	if session_filter then
+		local encoded = cwd:gsub("[/_]", "-")
+		path = projects_dir .. "/" .. encoded .. "/" .. session_filter .. ".jsonl"
+		if not vim.uv.fs_stat(path) then path = nil end
+	else
+		path = M.find_latest_jsonl(cwd)
+	end
 	if not path then return end
 
 	jsonl_watcher_handle = vim.uv.new_fs_event()

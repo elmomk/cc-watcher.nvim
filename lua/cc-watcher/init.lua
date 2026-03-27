@@ -149,7 +149,7 @@ end
 ---   { "user/cc-watcher.nvim", opts = { ... }, ... require("cc-watcher").lazy }
 M.lazy = {
 	cmd = {
-		"ClaudeSidebar", "ClaudeDiff",
+		"ClaudeSidebar", "ClaudeDiff", "ClaudeSession",
 		"ClaudeSnacks", "ClaudeFzf", "ClaudeTrouble", "ClaudeDiffview", "ClaudeFlash",
 	},
 	keys = {

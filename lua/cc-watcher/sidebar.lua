@@ -269,13 +269,39 @@ local function do_render(session_files)
 		hls[#hls + 1] = { 1, "ClaudeSession" }
 	else
 		local cwd = vim.uv.cwd()
-		local active = session.find_active_session(cwd)
-		if active then
-			lines[2] = "  session active"
-			hls[#hls + 1] = { 1, "ClaudeActive" }
+		local filter = session.get_session_filter()
+		if filter then
+			-- Filtered to a specific session — show its PID/label
+			local all = session.find_all_active_sessions(cwd)
+			local found = nil
+			for _, s in ipairs(all) do
+				if s.sessionId == filter then found = s; break end
+			end
+			if found then
+				local lbl = found.label ~= "" and found.label or found.sessionId:sub(1, 8)
+				local status = "  PID " .. found.pid .. ": " .. lbl
+				if #status > WIDTH then status = status:sub(1, WIDTH - 1) .. "…" end
+				lines[2] = status
+				hls[#hls + 1] = { 1, "ClaudeActive" }
+			else
+				lines[2] = "  filtered (session ended)"
+				hls[#hls + 1] = { 1, "ClaudeInactive" }
+			end
 		else
-			lines[2] = "  no session"
-			hls[#hls + 1] = { 1, "ClaudeInactive" }
+			local active = session.find_active_session(cwd)
+			if active then
+				local all = session.find_all_active_sessions(cwd)
+				if #all > 1 then
+					lines[2] = "  " .. #all .. " sessions active  S pick"
+					hls[#hls + 1] = { 1, "ClaudeActive" }
+				else
+					lines[2] = "  session active"
+					hls[#hls + 1] = { 1, "ClaudeActive" }
+				end
+			else
+				lines[2] = "  no session"
+				hls[#hls + 1] = { 1, "ClaudeInactive" }
+			end
 		end
 	end
 
@@ -433,6 +459,7 @@ local function show_help()
 		"│                                │",
 		"│  Sidebar:                      │",
 		"│    <CR>/d/o Open file with diff │",
+		"│    S       Pick session        │",
 		"│    r       Refresh             │",
 		"│    H       Toggle history      │",
 		"│    ]g/[g   Next/prev commit    │",
@@ -451,6 +478,7 @@ local function show_help()
 		"│    :ClaudeTrouble              │",
 		"│    :ClaudeDiffview [file]      │",
 		"│    :ClaudeFlash                │",
+		"│    :ClaudeSession              │",
 		"│                                │",
 		"│  ● live change  ○ from session │",
 		"╰────────────────────────────────╯",
@@ -564,6 +592,44 @@ function M.open()
 			history_idx = history_idx - 1
 			M.render()
 		end
+	end, opts)
+
+	-- Session picker
+	vim.keymap.set("n", "S", function()
+		local cwd = vim.uv.cwd()
+		local sessions = session.find_all_active_sessions(cwd)
+
+		local items = {}
+		items[1] = { sessionId = nil, label = "All sessions", pid = nil, startedAt = 0 }
+		for _, s in ipairs(sessions) do
+			items[#items + 1] = s
+		end
+
+		if #items <= 1 then
+			vim.notify("No active sessions to choose from", vim.log.levels.INFO)
+			return
+		end
+
+		vim.ui.select(items, {
+			prompt = "Select Claude session:",
+			format_item = function(s)
+				if not s.sessionId then
+					return "  All sessions (" .. (#items - 1) .. " active)"
+				end
+				local lbl = s.label ~= "" and s.label or s.sessionId:sub(1, 8)
+				return string.format("  PID %d: %s", s.pid, lbl)
+			end,
+		}, function(choice)
+			if not choice then return end
+			if choice.sessionId then
+				session.set_session_filter(choice.sessionId)
+			else
+				session.clear_session_filter()
+			end
+			session.watch_jsonl(cwd)
+			history_loaded = false
+			M.render()
+		end)
 	end, opts)
 
 	M.render()

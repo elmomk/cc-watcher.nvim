@@ -98,6 +98,47 @@ end, {
 	desc = "Flash: jump to Claude hunk",
 })
 
+vim.api.nvim_create_user_command("ClaudeSession", function()
+	ensure()
+	local session = require("cc-watcher.session")
+	local cwd = vim.uv.cwd()
+	local sessions = session.find_all_active_sessions(cwd)
+
+	local items = {}
+	items[1] = { sessionId = nil, label = "All sessions", pid = nil, startedAt = 0 }
+	for _, s in ipairs(sessions) do
+		items[#items + 1] = s
+	end
+
+	if #items <= 1 then
+		vim.notify("No active sessions to choose from", vim.log.levels.INFO)
+		return
+	end
+
+	vim.ui.select(items, {
+		prompt = "Select Claude session:",
+		format_item = function(s)
+			if not s.sessionId then
+				return "  All sessions (" .. (#items - 1) .. " active)"
+			end
+			local lbl = s.label ~= "" and s.label or s.sessionId:sub(1, 8)
+			return string.format("  PID %d: %s", s.pid, lbl)
+		end,
+	}, function(choice)
+		if not choice then return end
+		if choice.sessionId then
+			session.set_session_filter(choice.sessionId)
+		else
+			session.clear_session_filter()
+		end
+		session.watch_jsonl(cwd)
+		local sidebar_ok, sidebar = pcall(require, "cc-watcher.sidebar")
+		if sidebar_ok then sidebar.render() end
+	end)
+end, {
+	desc = "Pick which Claude Code session to watch",
+})
+
 vim.api.nvim_create_user_command("ClaudeDiffview", function(args)
 	ensure()
 	local cfg = require("cc-watcher").config
