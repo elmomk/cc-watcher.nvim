@@ -87,7 +87,7 @@ function M.write(port, ide_name)
 		pid = uv.os_getpid(),
 		workspaceFolders = folders,
 		ideName = ide_name,
-		useWebSocket = true,
+		transport = "ws",
 		authToken = token,
 	})
 
@@ -120,7 +120,7 @@ function M.update_workspaces(port, token, ide_name)
 		pid = uv.os_getpid(),
 		workspaceFolders = folders,
 		ideName = ide_name,
-		useWebSocket = true,
+		transport = "ws",
 		authToken = token,
 	})
 
