@@ -171,6 +171,17 @@ function M.statusline()
 	if n > 0 then
 		parts[#parts + 1] = "󰚩 " .. n
 	end
+	-- Show session count when > 1
+	local sok, sess = pcall(require, "cc-watcher.session")
+	if sok then
+		local cwd = vim.uv.cwd()
+		if cwd then
+			local all = sess.find_all_active_sessions(cwd)
+			if #all > 1 then
+				parts[#parts + 1] = "S" .. #all
+			end
+		end
+	end
 	if M.config.mcp.enabled then
 		local mok, mcp = pcall(require, "cc-watcher.mcp")
 		if mok and mcp.is_running() then

@@ -295,7 +295,6 @@ function M.get_claude_edited_files_async(callback, cwd)
 	callback(filtered)
 end
 
---- Extract the first user message from a JSONL file (used as session label)
 ---@param jsonl_path string
 ---@return string
 local function get_session_label(jsonl_path)
@@ -328,6 +327,13 @@ local function get_session_label(jsonl_path)
 		end
 	end
 	return ""
+end
+
+--- Public wrapper for get_session_label
+---@param jsonl_path string
+---@return string
+function M.get_conversation_label(jsonl_path)
+	return get_session_label(jsonl_path)
 end
 
 --- Find ALL active sessions for a cwd (not just the most recent)
@@ -398,6 +404,150 @@ end
 ---@return string|nil
 function M.get_session_filter()
 	return session_filter
+end
+
+--- Session/conversation picker: lists JSONL conversation files for this project.
+--- Prefers vim.ui.select when overridden (LazyVim, dressing.nvim),
+--- then snacks.picker → fzf-lua → native vim.ui.select.
+---@param on_done fun()|nil callback after selection (e.g. sidebar.render)
+function M.pick(on_done)
+	local cwd = vim.uv.cwd()
+	if not cwd then return end
+
+	-- List all JSONL conversation files (these are the actual data sources)
+	local jsonl_paths = M.find_all_jsonl(cwd)
+	if #jsonl_paths == 0 then
+		vim.notify("No Claude conversations found for this project", vim.log.levels.INFO)
+		return
+	end
+
+	-- Build picker items from JSONL files
+	local conversations = {}
+	for _, path in ipairs(jsonl_paths) do
+		local name = vim.fn.fnamemodify(path, ":t:r") -- UUID without .jsonl
+		local label = get_session_label(path)
+		local stat = vim.uv.fs_stat(path)
+		local mtime = stat and stat.mtime.sec or 0
+		conversations[#conversations + 1] = {
+			id = name,
+			label = label,
+			path = path,
+			mtime = mtime,
+		}
+	end
+
+	if #conversations <= 1 and not session_filter then
+		vim.notify("Only one conversation — nothing to filter", vim.log.levels.INFO)
+		return
+	end
+
+	local function apply_choice(conv)
+		if conv.id then
+			M.set_session_filter(conv.id)
+		else
+			M.clear_session_filter()
+		end
+		M.watch_jsonl(cwd)
+		if on_done then on_done() end
+	end
+
+	local function format_label(item)
+		if not item.id then
+			return "All conversations (" .. #conversations .. ")"
+		end
+		local lbl = (item.label or "") ~= "" and item.label or item.id:sub(1, 8)
+		-- Relative time
+		local age = ""
+		if item.mtime > 0 then
+			local diff = os.time() - item.mtime
+			if diff < 60 then age = " (now)"
+			elseif diff < 3600 then age = " (" .. math.floor(diff / 60) .. "m ago)"
+			elseif diff < 86400 then age = " (" .. math.floor(diff / 3600) .. "h ago)"
+			else age = " (" .. math.floor(diff / 86400) .. "d ago)"
+			end
+		end
+		return lbl .. age
+	end
+
+	local items = { { id = nil, label = "All conversations" } }
+	for _, c in ipairs(conversations) do
+		items[#items + 1] = c
+	end
+
+	local function use_ui_select()
+		vim.ui.select(items, {
+			prompt = "Select Claude conversation:",
+			format_item = format_label,
+		}, function(choice)
+			if not choice then return end
+			apply_choice(choice)
+		end)
+	end
+
+	-- 1. If vim.ui.select has been overridden (LazyVim, dressing.nvim, etc.), use it
+	if package.loaded["dressing"]
+		or package.loaded["snacks.input"]
+		or package.loaded["telescope._extensions.ui-select"] then
+		use_ui_select()
+		return
+	end
+
+	-- 2. Try snacks.picker
+	local snacks_ok, Snacks = pcall(require, "snacks")
+	if snacks_ok and Snacks.picker then
+		local picker_items = {}
+		for i, item in ipairs(items) do
+			picker_items[i] = {
+				text = format_label(item),
+				item = item,
+				idx = i,
+			}
+		end
+		Snacks.picker({
+			title = "Claude Conversations",
+			items = picker_items,
+			format = function(pi)
+				local is_active = session_filter and pi.item.id == session_filter
+				local is_all = not pi.item.id and not session_filter
+				local marker = (is_active or is_all) and "● " or "  "
+				return {
+					{ marker, (is_active or is_all) and "ClaudeLive" or nil },
+					{ pi.text },
+				}
+			end,
+			confirm = function(picker, pi)
+				picker:close()
+				apply_choice(pi.item)
+			end,
+		})
+		return
+	end
+
+	-- 3. Try fzf-lua
+	local fzf_ok, fzf = pcall(require, "fzf-lua")
+	if fzf_ok then
+		local entries = {}
+		local entry_map = {}
+		for _, item in ipairs(items) do
+			local label = format_label(item)
+			entries[#entries + 1] = label
+			entry_map[label] = item
+		end
+		fzf.fzf_exec(entries, {
+			prompt = "Claude Conversations> ",
+			actions = {
+				["default"] = function(selected)
+					if not selected or #selected == 0 then return end
+					local item = entry_map[selected[1]]
+					if item then apply_choice(item) end
+				end,
+			},
+		})
+		return
+	end
+
+	-- 4. Last resort: native vim.ui.select
+	use_ui_select()
 end
 
 --- Start watching the active JSONL file for changes

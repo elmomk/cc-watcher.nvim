@@ -18,8 +18,8 @@ end
 
 --- Parse an fzf entry to extract the absolute filepath
 local function parse_file_entry(entry)
-	-- Format: "● rel/path (+N/-M)" or "○ rel/path (+N/-M)"
-	local rel = entry:match("^[●○]%s+(%S+)")
+	-- Format: "▶ rel/path (+N/-M)" or "● rel/path (+N/-M)" or "○ rel/path (+N/-M)"
+	local rel = entry:match("^[●○▶]%s+(%S+)")
 	if not rel then return nil end
 	local cwd = vim.uv.cwd()
 	local abs = cwd .. "/" .. rel
@@ -89,9 +89,20 @@ function M.changed_files()
 				return
 			end
 
+			-- Find the most recently modified file
+			local best_mtime, latest_file = 0, nil
+			for _, f in ipairs(files) do
+				local st = vim.uv.fs_stat(f.abs)
+				if st and st.mtime.sec > best_mtime then
+					best_mtime = st.mtime.sec
+					latest_file = f.abs
+				end
+			end
+
 			local entries = {}
 			for _, f in ipairs(files) do
-				local indicator = f.live and "\xe2\x97\x8f" or "\xe2\x97\x8b" -- ● / ○
+				local is_latest = latest_file and f.abs == latest_file
+				local indicator = is_latest and "▶" or (f.live and "\xe2\x97\x8f" or "\xe2\x97\x8b") -- ▶ / ● / ○
 				local old_text = util.get_old_text(f.abs, cwd)
 				local new_text = util.read_file(f.abs) or ""
 				local hunks = util.compute_hunks(old_text, new_text)

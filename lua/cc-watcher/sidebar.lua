@@ -151,16 +151,17 @@ local function load_history(session_files)
 	if vim.tbl_count(claude_files) == 0 then return end
 
 	-- Get recent commits with their changed files
-	local log = vim.fn.systemlist("git log --pretty=format:'%h|%s' --name-only -50 2>/dev/null")
+	local log = vim.fn.systemlist("git log --pretty=format:'%h|%s|%cr' --name-only -50 2>/dev/null")
 	if vim.v.shell_error ~= 0 then return end
 
 	local commits = {}
 	local current = nil
 	for _, line in ipairs(log) do
-		local hash, subject = line:match("^'?([a-f0-9]+)|(.+)'?$")
+		local hash, subject, date = line:match("^'?([a-f0-9]+)|(.+)|(.+)'?$")
 		if hash then
 			subject = subject:gsub("[%c]", "")
-			current = { hash = hash, subject = subject, files = {} }
+			date = date and date:gsub("[%c]", "") or ""
+			current = { hash = hash, subject = subject, date = date, files = {} }
 			commits[#commits + 1] = current
 		elseif current and line ~= "" then
 			current.files[#current.files + 1] = line
@@ -258,33 +259,33 @@ local function do_render(session_files)
 	end
 
 	-- Header
-	lines[1] = " 󰚩 Claude Code"
+	local filter = not viewing_commit and session.get_session_filter() or nil
+	lines[1] = filter and " 󰚩 Claude Code 󰈲" or " 󰚩 Claude Code"
 	hls[#hls + 1] = { 0, "ClaudeHeader" }
 
 	if viewing_commit then
 		-- History mode header
-		local label = "  " .. viewing_commit.hash .. " " .. viewing_commit.subject
+		local date_suffix = viewing_commit.date ~= "" and ("  " .. viewing_commit.date) or ""
+		local label = "  " .. viewing_commit.hash .. " " .. viewing_commit.subject .. date_suffix
 		if #label > WIDTH then label = label:sub(1, WIDTH - 1) .. "…" end
 		lines[2] = label
 		hls[#hls + 1] = { 1, "ClaudeSession" }
 	else
 		local cwd = vim.uv.cwd()
-		local filter = session.get_session_filter()
 		if filter then
-			-- Filtered to a specific session — show its PID/label
-			local all = session.find_all_active_sessions(cwd)
-			local found = nil
-			for _, s in ipairs(all) do
-				if s.sessionId == filter then found = s; break end
-			end
-			if found then
-				local lbl = found.label ~= "" and found.label or found.sessionId:sub(1, 8)
-				local status = "  PID " .. found.pid .. ": " .. lbl
+			-- Filtered to a specific conversation — show its label
+			local encoded = cwd:gsub("[/_]", "-")
+			local jsonl = vim.fn.expand("~/.claude/projects") .. "/" .. encoded .. "/" .. filter .. ".jsonl"
+			local stat = vim.uv.fs_stat(jsonl)
+			if stat then
+				local lbl = session.get_conversation_label(jsonl)
+				if lbl == "" then lbl = filter:sub(1, 8) end
+				local status = "  " .. lbl
 				if #status > WIDTH then status = status:sub(1, WIDTH - 1) .. "…" end
 				lines[2] = status
 				hls[#hls + 1] = { 1, "ClaudeActive" }
 			else
-				lines[2] = "  filtered (session ended)"
+				lines[2] = "  filtered (conversation ended)"
 				hls[#hls + 1] = { 1, "ClaudeInactive" }
 			end
 		else
@@ -482,7 +483,7 @@ local function show_help()
 		"│    :ClaudeFlash                │",
 		"│    :ClaudeSession              │",
 		"│                                │",
-		"│  ● live change  ○ from session │",
+		"│  ▶ latest  ● live  ○ session   │",
 		"╰────────────────────────────────╯",
 	}
 	local buf = vim.api.nvim_create_buf(false, true)
@@ -598,37 +599,7 @@ function M.open()
 
 	-- Session picker
 	vim.keymap.set("n", "S", function()
-		local cwd = vim.uv.cwd()
-		local sessions = session.find_all_active_sessions(cwd)
-
-		local items = {}
-		items[1] = { sessionId = nil, label = "All sessions", pid = nil, startedAt = 0 }
-		for _, s in ipairs(sessions) do
-			items[#items + 1] = s
-		end
-
-		if #items <= 1 then
-			vim.notify("No active sessions to choose from", vim.log.levels.INFO)
-			return
-		end
-
-		vim.ui.select(items, {
-			prompt = "Select Claude session:",
-			format_item = function(s)
-				if not s.sessionId then
-					return "  All sessions (" .. (#items - 1) .. " active)"
-				end
-				local lbl = s.label ~= "" and s.label or s.sessionId:sub(1, 8)
-				return string.format("  PID %d: %s", s.pid, lbl)
-			end,
-		}, function(choice)
-			if not choice then return end
-			if choice.sessionId then
-				session.set_session_filter(choice.sessionId)
-			else
-				session.clear_session_filter()
-			end
-			session.watch_jsonl(cwd)
+		session.pick(function()
 			history_loaded = false
 			M.render()
 		end)

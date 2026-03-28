@@ -162,6 +162,8 @@ function M.hunks()
 							indicator = indicator,
 							indicator_hl = indicator_hl,
 							is_latest = is_latest,
+							cwd = cwd,
+							hunk = h, -- { old_start, old_count, new_start, new_count }
 						}
 					end
 				end
@@ -177,6 +179,68 @@ function M.hunks()
 					ret[#ret + 1] = { ":" .. item.pos[1] .. " ", "Comment" }
 					ret[#ret + 1] = { item.desc, "ClaudeStats" }
 					return ret
+				end,
+				preview = function(ctx)
+					require("cc-watcher.highlights").setup()
+					local item = ctx.item
+					local h = item.hunk
+					local old_text = util.get_old_text(item.file, item.cwd)
+					local new_text = util.read_file(item.file) or ""
+
+					-- Show context around the hunk (5 lines before/after)
+					local new_lines = vim.split(new_text, "\n", { plain = true })
+					local old_lines = vim.split(old_text, "\n", { plain = true })
+					local context_size = 5
+					local preview_lines = {}
+					local hl_map = {} -- line index -> hl group
+
+					-- Context before
+					local ctx_start = math.max(1, h[3] - context_size)
+					for i = ctx_start, h[3] - 1 do
+						if new_lines[i] then
+							preview_lines[#preview_lines + 1] = "  " .. new_lines[i]
+						end
+					end
+
+					-- Deleted lines (from old)
+					for i = h[1], h[1] + h[2] - 1 do
+						if old_lines[i] then
+							local idx = #preview_lines + 1
+							preview_lines[idx] = "- " .. old_lines[i]
+							hl_map[idx] = "ClaudeDiffDelete"
+						end
+					end
+
+					-- Added lines (from new)
+					for i = h[3], h[3] + h[4] - 1 do
+						if new_lines[i] then
+							local idx = #preview_lines + 1
+							preview_lines[idx] = "+ " .. new_lines[i]
+							hl_map[idx] = "ClaudeDiffAdd"
+						end
+					end
+
+					-- Context after
+					local ctx_end = math.min(#new_lines, h[3] + h[4] - 1 + context_size)
+					for i = h[3] + h[4], ctx_end do
+						if new_lines[i] then
+							preview_lines[#preview_lines + 1] = "  " .. new_lines[i]
+						end
+					end
+
+					ctx.preview:reset()
+					ctx.preview:set_lines(preview_lines)
+					local buf = ctx.preview.win.buf
+					vim.schedule(function()
+						if not vim.api.nvim_buf_is_valid(buf) then return end
+						vim.api.nvim_buf_clear_namespace(buf, diff_ns, 0, -1)
+						for i, hl in pairs(hl_map) do
+							pcall(vim.api.nvim_buf_set_extmark, buf, diff_ns, i - 1, 0, {
+								line_hl_group = hl,
+								priority = 200,
+							})
+						end
+					end)
 				end,
 				confirm = function(picker, item)
 					picker:close()

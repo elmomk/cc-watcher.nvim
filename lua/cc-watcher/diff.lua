@@ -212,6 +212,20 @@ function M.show(filepath, opts)
 
 	active_diffs[bufnr] = { hunks = full_hunks, hunk_lines = hunk_lines, filepath = filepath }
 
+	-- Re-render diff overlay on buffer changes (so undo after revert refreshes correctly)
+	vim.api.nvim_create_autocmd("TextChanged", {
+		group = augroup,
+		buffer = bufnr,
+		callback = function()
+			local state = active_diffs[bufnr]
+			if not state then return true end -- remove autocmd if diff cleared
+			-- Refresh: recompute hunks and re-render overlay
+			local fp = state.filepath
+			clear(bufnr)
+			M.show(fp)
+		end,
+	})
+
 	-- ]c / [c hunk navigation with flash
 	vim.keymap.set("n", "]c", function()
 		local row = vim.api.nvim_win_get_cursor(0)[1]
@@ -259,14 +273,19 @@ function M.show(filepath, opts)
 			end
 
 			if in_hunk then
-				local old_lines = {}
-				for i = h.old_start, h.old_start + h.old_count - 1 do
-					if bl[i] then old_lines[#old_lines + 1] = bl[i] end
-				end
-				vim.api.nvim_buf_set_lines(bufnr, h.new_start - 1, h.new_start - 1 + h.new_count, false, old_lines)
-				clear(bufnr)
-				M.show(state.filepath)
-				vim.notify("Hunk reverted", vim.log.levels.INFO)
+				vim.ui.input({ prompt = "Revert hunk? (y/n): " }, function(input)
+					if not input or input:lower() ~= "y" then
+						vim.notify("Revert cancelled", vim.log.levels.INFO)
+						return
+					end
+					local old_lines = {}
+					for i = h.old_start, h.old_start + h.old_count - 1 do
+						if bl[i] then old_lines[#old_lines + 1] = bl[i] end
+					end
+					vim.api.nvim_buf_set_lines(bufnr, h.new_start - 1, h.new_start - 1 + h.new_count, false, old_lines)
+					-- TextChanged autocmd will refresh the diff overlay
+					vim.notify("Hunk reverted (u to undo)", vim.log.levels.INFO)
+				end)
 				return
 			end
 		end

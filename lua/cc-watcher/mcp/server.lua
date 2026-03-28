@@ -840,6 +840,9 @@ local function handle_open_diff(params, context)
 	-- Focus the proposed window
 	vim.api.nvim_set_current_win(proposed_win)
 
+	-- Notify user about the incoming diff
+	vim.notify("Claude proposes changes to " .. vim.fn.fnamemodify(file_path, ":t"), vim.log.levels.INFO)
+
 	-- Return nil — response will be sent via resolve_diff
 	return nil
 end
