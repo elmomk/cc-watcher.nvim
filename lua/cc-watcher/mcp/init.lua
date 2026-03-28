@@ -27,6 +27,7 @@ local function start()
 		max_send_queue = config.max_send_queue,
 		ping_interval_ms = config.ping_interval_ms,
 		diff_timeout_ms = config.diff_timeout_ms,
+		diff_layout = config.diff_layout,
 	})
 
 	-- Start TCP server

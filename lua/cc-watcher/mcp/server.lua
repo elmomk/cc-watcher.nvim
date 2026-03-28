@@ -31,6 +31,7 @@ local config = {
 	max_send_queue = 1000,
 	ping_interval_ms = 30000,
 	diff_timeout_ms = 300000,
+	diff_layout = "inline",
 }
 
 -- Forward declarations
@@ -47,6 +48,7 @@ function M.configure(cfg)
 	if cfg.max_send_queue then config.max_send_queue = cfg.max_send_queue end
 	if cfg.ping_interval_ms then config.ping_interval_ms = cfg.ping_interval_ms end
 	if cfg.diff_timeout_ms then config.diff_timeout_ms = cfg.diff_timeout_ms end
+	if cfg.diff_layout then config.diff_layout = cfg.diff_layout end
 end
 
 --- Set auth token for handshake validation
@@ -744,14 +746,19 @@ local function handle_open_diff(params, context)
 	-- Store the diff key on the buffer for command-based accept/reject
 	vim.b[proposed_bufnr].cc_mcp_diff_key = key
 
-	-- Start diff on original
-	vim.cmd("diffthis")
-
-	-- Open vsplit with proposed buffer
-	vim.cmd("vertical rightbelow sbuffer " .. proposed_bufnr)
-	vim.cmd("diffthis")
-	vim.cmd("wincmd =")
-	local proposed_win = vim.api.nvim_get_current_win()
+	local proposed_win
+	if config.diff_layout == "inline" then
+		-- Inline layout: replace the original buffer in the same window
+		vim.api.nvim_set_current_buf(proposed_bufnr)
+		proposed_win = vim.api.nvim_get_current_win()
+	else
+		-- Vertical split layout (default): original left, proposed right
+		vim.cmd("diffthis")
+		vim.cmd("vertical rightbelow sbuffer " .. proposed_bufnr)
+		vim.cmd("diffthis")
+		vim.cmd("wincmd =")
+		proposed_win = vim.api.nvim_get_current_win()
+	end
 
 	-- Virtual text hint — :w to accept, :q to reject
 	local ns = vim.api.nvim_create_namespace("cc_watcher_mcp_diff")

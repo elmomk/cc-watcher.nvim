@@ -35,6 +35,7 @@ local defaults = {
 		port_range = { 10000, 65535 },
 		ide_name = "Neovim",
 		selection_tracking = true,
+		diff_layout = "inline", -- "inline" (single buffer) or "vertical" (side-by-side)
 		diff_timeout_ms = 300000,
 		ping_interval_ms = 30000,
 		selection_debounce_ms = 100,
