@@ -258,8 +258,7 @@ function M.get_claude_edited_files_async(callback, cwd)
 
 	local paths
 	if session_filter then
-		local encoded = cwd:gsub("[/_]", "-")
-		local jsonl = projects_dir .. "/" .. encoded .. "/" .. session_filter .. ".jsonl"
+		local jsonl = M.get_jsonl_path(cwd, session_filter)
 		paths = vim.uv.fs_stat(jsonl) and { jsonl } or {}
 	else
 		paths = M.find_all_jsonl(cwd)
@@ -334,6 +333,15 @@ end
 ---@return string
 function M.get_conversation_label(jsonl_path)
 	return get_session_label(jsonl_path)
+end
+
+--- Build the JSONL file path for a conversation ID
+---@param cwd string
+---@param conversation_id string
+---@return string
+function M.get_jsonl_path(cwd, conversation_id)
+	local encoded = cwd:gsub("[/_]", "-")
+	return projects_dir .. "/" .. encoded .. "/" .. conversation_id .. ".jsonl"
 end
 
 --- Find ALL active sessions for a cwd (not just the most recent)
@@ -459,11 +467,11 @@ function M.pick(on_done)
 		-- Relative time
 		local age = ""
 		if item.mtime > 0 then
-			local diff = os.time() - item.mtime
-			if diff < 60 then age = " (now)"
-			elseif diff < 3600 then age = " (" .. math.floor(diff / 60) .. "m ago)"
-			elseif diff < 86400 then age = " (" .. math.floor(diff / 3600) .. "h ago)"
-			else age = " (" .. math.floor(diff / 86400) .. "d ago)"
+			local elapsed = os.time() - item.mtime
+			if elapsed < 60 then age = " (now)"
+			elseif elapsed < 3600 then age = " (" .. math.floor(elapsed / 60) .. "m ago)"
+			elseif elapsed < 86400 then age = " (" .. math.floor(elapsed / 3600) .. "h ago)"
+			else age = " (" .. math.floor(elapsed / 86400) .. "d ago)"
 			end
 		end
 		return lbl .. age
@@ -562,8 +570,7 @@ function M.watch_jsonl(cwd)
 	cwd = cwd or vim.uv.cwd()
 	local path
 	if session_filter then
-		local encoded = cwd:gsub("[/_]", "-")
-		path = projects_dir .. "/" .. encoded .. "/" .. session_filter .. ".jsonl"
+		path = M.get_jsonl_path(cwd, session_filter)
 		if not vim.uv.fs_stat(path) then path = nil end
 	else
 		path = M.find_latest_jsonl(cwd)

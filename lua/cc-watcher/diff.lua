@@ -219,6 +219,8 @@ function M.show(filepath, opts)
 		callback = function()
 			local state = active_diffs[bufnr]
 			if not state then return true end -- remove autocmd if diff cleared
+			if state._refreshing then return end
+			state._refreshing = true
 			-- Refresh: recompute hunks and re-render overlay
 			local fp = state.filepath
 			clear(bufnr)

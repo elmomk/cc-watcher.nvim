@@ -19,7 +19,8 @@ end
 --- Parse an fzf entry to extract the absolute filepath
 local function parse_file_entry(entry)
 	-- Format: "▶ rel/path (+N/-M)" or "● rel/path (+N/-M)" or "○ rel/path (+N/-M)"
-	local rel = entry:match("^[●○▶]%s+(%S+)")
+	-- Skip the multi-byte UTF-8 indicator + whitespace, then capture the path
+	local rel = entry:match("^%S+%s+(%S+)")
 	if not rel then return nil end
 	local cwd = vim.uv.cwd()
 	local abs = cwd .. "/" .. rel

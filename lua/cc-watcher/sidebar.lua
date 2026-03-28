@@ -274,8 +274,7 @@ local function do_render(session_files)
 		local cwd = vim.uv.cwd()
 		if filter then
 			-- Filtered to a specific conversation — show its label
-			local encoded = cwd:gsub("[/_]", "-")
-			local jsonl = vim.fn.expand("~/.claude/projects") .. "/" .. encoded .. "/" .. filter .. ".jsonl"
+			local jsonl = session.get_jsonl_path(cwd, filter)
 			local stat = vim.uv.fs_stat(jsonl)
 			if stat then
 				local lbl = session.get_conversation_label(jsonl)

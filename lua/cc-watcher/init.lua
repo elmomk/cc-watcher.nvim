@@ -171,11 +171,11 @@ function M.statusline()
 	if n > 0 then
 		parts[#parts + 1] = "󰚩 " .. n
 	end
-	-- Show session count when > 1
+	-- Show session count when > 1 (gated behind cached find_active_session)
 	local sok, sess = pcall(require, "cc-watcher.session")
 	if sok then
 		local cwd = vim.uv.cwd()
-		if cwd then
+		if cwd and sess.find_active_session(cwd) then
 			local all = sess.find_all_active_sessions(cwd)
 			if #all > 1 then
 				parts[#parts + 1] = "S" .. #all
