@@ -139,6 +139,43 @@ end, {
 	desc = "Pick which Claude Code session to watch",
 })
 
+vim.api.nvim_create_user_command("ClaudeMcp", function(args)
+	ensure()
+	local cfg = require("cc-watcher").config
+	if not cfg.mcp.enabled then
+		vim.notify("cc-watcher: mcp is disabled. Enable it with mcp = { enabled = true }", vim.log.levels.WARN)
+		return
+	end
+	local mcp = require("cc-watcher.mcp")
+	local sub = args.fargs[1]
+	if sub == "start" then
+		local ok, err = mcp.start()
+		if not ok then
+			vim.notify("cc-watcher/mcp: start failed: " .. (err or "unknown"), vim.log.levels.ERROR)
+		end
+	elseif sub == "stop" then
+		mcp.stop()
+		vim.notify("cc-watcher/mcp: stopped", vim.log.levels.INFO)
+	elseif sub == "status" then
+		local s = mcp.status()
+		local lines = {
+			"MCP Bridge: " .. (s.running and "running" or "stopped"),
+		}
+		if s.running then
+			lines[#lines + 1] = "  Port: " .. (s.port or "?")
+			lines[#lines + 1] = "  Connections: " .. s.active_connections .. "/" .. s.connections
+			lines[#lines + 1] = "  Pending diffs: " .. s.pending_diffs
+			lines[#lines + 1] = "  Lock file: " .. (s.lock_file or "none")
+		end
+		vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)
+	else
+		vim.notify("Usage: ClaudeMcp {start|stop|status}", vim.log.levels.INFO)
+	end
+end, {
+	nargs = "?",
+	complete = function() return { "start", "stop", "status" } end,
+	desc = "MCP WebSocket bridge for Claude Code",
+})
 vim.api.nvim_create_user_command("ClaudeDiffview", function(args)
 	ensure()
 	local cfg = require("cc-watcher").config

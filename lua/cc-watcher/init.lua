@@ -29,6 +29,18 @@ local defaults = {
 		mini_diff = false,
 		notifier = false,
 	},
+	mcp = {
+		enabled = false,
+		auto_start = true,
+		port_range = { 10000, 65535 },
+		ide_name = "Neovim",
+		selection_tracking = true,
+		diff_timeout_ms = 300000,
+		ping_interval_ms = 30000,
+		selection_debounce_ms = 100,
+		max_connections = 2,
+		max_send_queue = 1000,
+	},
 }
 
 M.config = vim.deepcopy(defaults)
@@ -50,6 +62,13 @@ function M.setup(opts)
 	M.config = vim.tbl_deep_extend("force", defaults, opts or {})
 
 	if _setup_done then
+		-- MCP may be newly enabled on a repeated setup() call
+		if M.config.mcp.enabled then
+			local mcp = require("cc-watcher.mcp")
+			if not mcp.is_running() then
+				mcp.setup(M.config.mcp)
+			end
+		end
 		return
 	end
 	_setup_done = true
@@ -127,6 +146,11 @@ function M.setup(opts)
 		end
 	end
 
+	-- MCP WebSocket bridge (opt-in)
+	if M.config.mcp.enabled then
+		require("cc-watcher.mcp").setup(M.config.mcp)
+	end
+
 	-- which-key integration (if available)
 	local wk_ok, wk = pcall(require, "which-key")
 	if wk_ok and wk.add then
@@ -137,12 +161,29 @@ function M.setup(opts)
 end
 
 --- Statusline component: returns "" or "󰚩 N" for lualine/heirline
+--- Appends MCP connection indicator when active.
 function M.statusline()
 	local ok, watcher = pcall(require, "cc-watcher.watcher")
 	if not ok then return "" end
 	local n = vim.tbl_count(watcher.get_changed_files())
-	if n == 0 then return "" end
-	return "󰚩 " .. n
+	local parts = {}
+	if n > 0 then
+		parts[#parts + 1] = "󰚩 " .. n
+	end
+	if M.config.mcp.enabled then
+		local mok, mcp = pcall(require, "cc-watcher.mcp")
+		if mok and mcp.is_running() then
+			local mcp_server = require("cc-watcher.mcp.server")
+			local count = mcp_server.client_count()
+			if count > 0 then
+				parts[#parts + 1] = "󱐋 " .. count
+			else
+				parts[#parts + 1] = "󱐋"
+			end
+		end
+	end
+	if #parts == 0 then return "" end
+	return table.concat(parts, " ")
 end
 
 --- Lazy.nvim spec helpers — spread into your plugin spec:
@@ -151,6 +192,7 @@ M.lazy = {
 	cmd = {
 		"ClaudeSidebar", "ClaudeDiff", "ClaudeSession",
 		"ClaudeSnacks", "ClaudeFzf", "ClaudeTrouble", "ClaudeDiffview", "ClaudeFlash",
+		"ClaudeMcp",
 	},
 	keys = {
 		{ "<leader>cs", function() require("cc-watcher")._ensure_setup(); require("cc-watcher.sidebar").toggle() end, desc = "Claude - toggle sidebar" },

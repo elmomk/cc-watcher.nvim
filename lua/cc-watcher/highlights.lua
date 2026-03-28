@@ -36,6 +36,11 @@ local function apply()
 	hl("ClaudeDiffAddSign",    { link = "Added" })
 	hl("ClaudeDiffChangeSign", { link = "Changed" })
 	hl("ClaudeDiffDeleteSign", { link = "Removed" })
+
+	-- MCP diff accept/reject
+	hl("ClaudeMcpDiffAccept",  { link = "DiagnosticOk" })
+	hl("ClaudeMcpDiffReject",  { link = "DiagnosticError" })
+	hl("ClaudeMcpDiffHeader",  { link = "Title" })
 end
 
 local registered = false
