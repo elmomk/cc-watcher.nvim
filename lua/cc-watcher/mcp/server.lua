@@ -601,12 +601,39 @@ end
 -- openDiff implementation
 ----------------------------------------------------------------------
 
+--- Find a suitable editor window (skip terminals, sidebars, floats)
+---@return number|nil winid
+local function find_editor_window()
+	local dominated = {
+		"neo-tree", "NvimTree", "oil", "minifiles", "netrw",
+		"aerial", "tagbar", "snacks_picker_list", "cc-watcher",
+	}
+	local dominated_set = {}
+	for _, ft in ipairs(dominated) do dominated_set[ft] = true end
+
+	for _, win in ipairs(vim.api.nvim_list_wins()) do
+		if vim.api.nvim_win_is_valid(win) then
+			local win_cfg = vim.api.nvim_win_get_config(win)
+			if not win_cfg.relative or win_cfg.relative == "" then
+				local buf = vim.api.nvim_win_get_buf(win)
+				local bt = vim.bo[buf].buftype
+				local ft = vim.bo[buf].filetype
+				if bt ~= "terminal" and bt ~= "prompt" and not dominated_set[ft] then
+					return win
+				end
+			end
+		end
+	end
+	return nil
+end
+
 --- Close a single diff and resolve its deferred response
 ---@param key string pending diff key
 ---@param result string "FILE_SAVED" or "DIFF_REJECTED"
 local function resolve_diff(key, result)
 	local diff_info = pending_diffs[key]
 	if not diff_info then return end
+	diff_info.resolving = true
 
 	-- Stop timeout timer
 	if diff_info.timer then
@@ -616,15 +643,19 @@ local function resolve_diff(key, result)
 		end
 	end
 
-	-- Close diff buffers/windows
-	if diff_info.scratch_bufnr and vim.api.nvim_buf_is_valid(diff_info.scratch_bufnr) then
-		-- Find and close windows showing this buffer
+	-- Clean up autocmds
+	if diff_info.augroup then
+		pcall(vim.api.nvim_del_augroup_by_id, diff_info.augroup)
+	end
+
+	-- Close proposed buffer windows and delete buffer
+	if diff_info.proposed_bufnr and vim.api.nvim_buf_is_valid(diff_info.proposed_bufnr) then
 		for _, win in ipairs(vim.api.nvim_list_wins()) do
-			if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == diff_info.scratch_bufnr then
+			if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == diff_info.proposed_bufnr then
 				pcall(vim.api.nvim_win_close, win, true)
 			end
 		end
-		pcall(vim.api.nvim_buf_delete, diff_info.scratch_bufnr, { force = true })
+		pcall(vim.api.nvim_buf_delete, diff_info.proposed_bufnr, { force = true })
 	end
 
 	-- Turn off diff mode in original buffer window
@@ -632,13 +663,6 @@ local function resolve_diff(key, result)
 		vim.api.nvim_win_call(diff_info.orig_win, function()
 			vim.cmd("diffoff")
 		end)
-	end
-
-	-- Clean up keymaps on original buffer
-	if diff_info.orig_bufnr and vim.api.nvim_buf_is_valid(diff_info.orig_bufnr) then
-		for _, lhs in ipairs({ "<CR>", "a", "<Esc>", "r", "q" }) do
-			pcall(vim.keymap.del, "n", lhs, { buffer = diff_info.orig_bufnr })
-		end
 	end
 
 	-- Send response
@@ -660,6 +684,7 @@ local function close_all_diffs()
 end
 
 --- Open a diff view for a file change (deferred tool)
+--- Accept via :w, reject via :q — native Neovim workflow.
 ---@param params table { old_file_path, new_file_contents, tab_name }
 ---@param context table { connection_id, request_id, send_response }
 ---@return nil, table|nil error (deferred — response sent later)
@@ -677,38 +702,65 @@ local function handle_open_diff(params, context)
 	end
 
 	local key = context.connection_id .. ":" .. context.request_id
+	local is_new_file = not uv.fs_stat(file_path)
 
-	-- Open the original file
-	vim.cmd("edit " .. vim.fn.fnameescape(file_path))
-	local orig_bufnr = vim.api.nvim_get_current_buf()
-	local orig_win = vim.api.nvim_get_current_win()
+	-- Find a suitable window to show the diff
+	local target_win = find_editor_window()
+	if target_win then
+		vim.api.nvim_set_current_win(target_win)
+	end
 
-	-- Detect filetype
+	-- Open or create the original file buffer (left side)
+	local orig_bufnr, orig_win
+	if is_new_file then
+		-- New file: create an empty readonly buffer
+		orig_bufnr = vim.api.nvim_create_buf(false, true)
+		vim.api.nvim_buf_set_name(orig_bufnr, file_path .. " (NEW FILE)")
+		vim.bo[orig_bufnr].buftype = "nofile"
+		vim.bo[orig_bufnr].modifiable = false
+		vim.bo[orig_bufnr].readonly = true
+		vim.api.nvim_set_current_buf(orig_bufnr)
+	else
+		vim.cmd("edit " .. vim.fn.fnameescape(file_path))
+		orig_bufnr = vim.api.nvim_get_current_buf()
+	end
+	orig_win = vim.api.nvim_get_current_win()
+
+	-- Detect filetype for the proposed buffer
 	local ft = vim.filetype.match({ filename = file_path }) or vim.bo[orig_bufnr].filetype or ""
 
-	-- Create scratch buffer with new contents
-	local scratch_bufnr = vim.api.nvim_create_buf(false, true)
-	vim.api.nvim_buf_set_name(scratch_bufnr, "[" .. tab_name .. "] " .. vim.fn.fnamemodify(file_path, ":t"))
+	-- Create proposed buffer (right side) — editable, acwrite intercepts :w
+	local proposed_bufnr = vim.api.nvim_create_buf(false, true)
+	local proposed_name = tab_name .. " (proposed)"
+	-- Avoid name collisions
+	pcall(vim.api.nvim_buf_set_name, proposed_bufnr, proposed_name)
 	local lines = vim.split(new_contents, "\n", { plain = true })
-	vim.api.nvim_buf_set_lines(scratch_bufnr, 0, -1, false, lines)
-	vim.bo[scratch_bufnr].filetype = ft
-	vim.bo[scratch_bufnr].buftype = "nofile"
-	vim.bo[scratch_bufnr].modifiable = false
+	vim.api.nvim_buf_set_lines(proposed_bufnr, 0, -1, false, lines)
+	vim.bo[proposed_bufnr].filetype = ft
+	vim.bo[proposed_bufnr].buftype = "acwrite"  -- :w triggers BufWriteCmd, no disk write
+	vim.bo[proposed_bufnr].swapfile = false
+	vim.bo[proposed_bufnr].modifiable = true     -- user can edit before accepting
 
-	-- Open vsplit with scratch buffer
-	vim.cmd("diffthis")
-	vim.cmd("vertical rightbelow sbuffer " .. scratch_bufnr)
-	vim.cmd("diffthis")
-	local scratch_win = vim.api.nvim_get_current_win()
+	-- Store the diff key on the buffer for command-based accept/reject
+	vim.b[proposed_bufnr].cc_mcp_diff_key = key
 
-	-- Virtual text hint
+	-- Start diff on original
+	vim.cmd("diffthis")
+
+	-- Open vsplit with proposed buffer
+	vim.cmd("vertical rightbelow sbuffer " .. proposed_bufnr)
+	vim.cmd("diffthis")
+	vim.cmd("wincmd =")
+	local proposed_win = vim.api.nvim_get_current_win()
+
+	-- Virtual text hint — :w to accept, :q to reject
 	local ns = vim.api.nvim_create_namespace("cc_watcher_mcp_diff")
-	pcall(vim.api.nvim_buf_set_extmark, scratch_bufnr, ns, 0, 0, {
+	pcall(vim.api.nvim_buf_set_extmark, proposed_bufnr, ns, 0, 0, {
 		virt_text = {
 			{ "  Accept: ", "ClaudeMcpDiffHeader" },
-			{ "<CR>", "ClaudeMcpDiffAccept" },
+			{ ":w", "ClaudeMcpDiffAccept" },
 			{ "  Reject: ", "ClaudeMcpDiffHeader" },
-			{ "<Esc>", "ClaudeMcpDiffReject" },
+			{ ":q", "ClaudeMcpDiffReject" },
 			{ "  ", "Normal" },
 		},
 		virt_text_pos = "right_align",
@@ -717,12 +769,60 @@ local function handle_open_diff(params, context)
 	-- Store pending diff info
 	local diff_info = {
 		send_response = context.send_response,
-		scratch_bufnr = scratch_bufnr,
+		proposed_bufnr = proposed_bufnr,
 		orig_bufnr = orig_bufnr,
 		orig_win = orig_win,
 		file_path = file_path,
-		new_contents = new_contents,
+		is_new_file = is_new_file,
 	}
+
+	-- Autocmd group for this diff's lifecycle
+	local augroup = vim.api.nvim_create_augroup("CcMcpDiff_" .. key:gsub(":", "_"), { clear = true })
+	diff_info.augroup = augroup
+
+	-- Accept: :w triggers BufWriteCmd — read buffer contents and write to file
+	vim.api.nvim_create_autocmd("BufWriteCmd", {
+		group = augroup,
+		buffer = proposed_bufnr,
+		callback = function()
+			if diff_info.resolving then return end
+			-- Read the (possibly edited) proposed buffer contents
+			local final_lines = vim.api.nvim_buf_get_lines(proposed_bufnr, 0, -1, false)
+			local final_contents = table.concat(final_lines, "\n") .. "\n"
+
+			-- Write to disk
+			local fd = uv.fs_open(file_path, "w", 384) -- 0600
+			if fd then
+				uv.fs_write(fd, final_contents, 0)
+				uv.fs_close(fd)
+			end
+
+			-- Reload original buffer from disk
+			if vim.api.nvim_buf_is_valid(orig_bufnr) and not is_new_file then
+				vim.api.nvim_buf_call(orig_bufnr, function()
+					vim.cmd("edit!")
+				end)
+			end
+
+			-- Mark proposed buffer as unmodified so :q doesn't warn
+			vim.bo[proposed_bufnr].modified = false
+
+			resolve_diff(key, "FILE_SAVED")
+		end,
+	})
+
+	-- Reject: closing/deleting the proposed buffer
+	vim.api.nvim_create_autocmd({ "BufDelete", "BufUnload" }, {
+		group = augroup,
+		buffer = proposed_bufnr,
+		callback = function()
+			if diff_info.resolving then return end
+			-- Defer to avoid issues during buffer teardown
+			vim.schedule(function()
+				resolve_diff(key, "DIFF_REJECTED")
+			end)
+		end,
+	})
 
 	-- Timeout timer
 	local timer = uv.new_timer()
@@ -735,47 +835,8 @@ local function handle_open_diff(params, context)
 	diff_info.timer = timer
 	pending_diffs[key] = diff_info
 
-	-- Buffer-local keymaps for accept/reject
-	local function accept()
-		-- Write new contents to file
-		local fd = uv.fs_open(file_path, "w", 384) -- 0600
-		if fd then
-			uv.fs_write(fd, new_contents, 0)
-			uv.fs_close(fd)
-		end
-
-		-- Reload original buffer
-		if vim.api.nvim_buf_is_valid(orig_bufnr) then
-			vim.api.nvim_buf_call(orig_bufnr, function()
-				vim.cmd("edit!")
-			end)
-		end
-
-		resolve_diff(key, "FILE_SAVED")
-	end
-
-	local function reject()
-		resolve_diff(key, "DIFF_REJECTED")
-	end
-
-	-- Set keymaps on scratch buffer
-	local map_opts = { buffer = scratch_bufnr, nowait = true, silent = true }
-	vim.keymap.set("n", "<CR>", accept, map_opts)
-	vim.keymap.set("n", "a", accept, map_opts)
-	vim.keymap.set("n", "<Esc>", reject, map_opts)
-	vim.keymap.set("n", "r", reject, map_opts)
-	vim.keymap.set("n", "q", reject, map_opts)
-
-	-- Also set on original buffer for convenience
-	local orig_map_opts = { buffer = orig_bufnr, nowait = true, silent = true }
-	vim.keymap.set("n", "<CR>", accept, orig_map_opts)
-	vim.keymap.set("n", "a", accept, orig_map_opts)
-	vim.keymap.set("n", "<Esc>", reject, orig_map_opts)
-	vim.keymap.set("n", "r", reject, orig_map_opts)
-	vim.keymap.set("n", "q", reject, orig_map_opts)
-
-	-- Focus the scratch window
-	vim.api.nvim_set_current_win(scratch_win)
+	-- Focus the proposed window
+	vim.api.nvim_set_current_win(proposed_win)
 
 	-- Return nil — response will be sent via resolve_diff
 	return nil
