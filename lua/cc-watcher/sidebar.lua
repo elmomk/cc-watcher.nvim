@@ -364,8 +364,10 @@ local function do_render(session_files)
 			local line = prefix .. file.rel
 			if stats ~= "" then
 				local padding = WIDTH - vim.api.nvim_strwidth(line) - vim.api.nvim_strwidth(stats) - 1
-				if padding > 0 then
+				if padding > 1 then
 					line = line .. string.rep(" ", padding) .. stats
+				else
+					line = line .. " " .. stats
 				end
 			end
 

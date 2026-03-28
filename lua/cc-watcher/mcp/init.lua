@@ -62,7 +62,6 @@ local function start()
 		})
 	end
 
-	vim.notify("[cc-watcher/mcp] listening on 127.0.0.1:" .. port, vim.log.levels.INFO)
 	return true
 end
 

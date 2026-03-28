@@ -16,6 +16,16 @@ function M.changed_files()
 
 	util.collect_files(function(files, cwd)
 		vim.schedule(function()
+			-- Find the most recently modified file
+			local best_mtime, latest_file = 0, nil
+			for _, f in ipairs(files) do
+				local st = vim.uv.fs_stat(f.abs)
+				if st and st.mtime.sec > best_mtime then
+					best_mtime = st.mtime.sec
+					latest_file = f.abs
+				end
+			end
+
 			local items = {}
 			for _, f in ipairs(files) do
 				local old_text = util.get_old_text(f.abs, cwd)
@@ -24,7 +34,9 @@ function M.changed_files()
 				local add, del = 0, 0
 				if hunks then add, del = util.hunk_stats(hunks) end
 
-				local indicator = f.live and "● " or "○ "
+				local is_latest = latest_file and f.abs == latest_file
+				local indicator = is_latest and "▶ " or (f.live and "● " or "○ ")
+				local indicator_hl = is_latest and "ClaudeFileLatest" or (f.live and "ClaudeLive" or "ClaudeSession")
 				local stats = ""
 				if add > 0 or del > 0 then stats = " +" .. add .. "/-" .. del end
 
@@ -32,9 +44,11 @@ function M.changed_files()
 					text = f.rel,
 					file = f.abs,
 					indicator = indicator,
+					indicator_hl = indicator_hl,
 					stats = stats,
 					rel = f.rel,
 					live = f.live,
+					is_latest = is_latest,
 					cwd = cwd,
 				}
 			end
@@ -44,8 +58,8 @@ function M.changed_files()
 				items = items,
 				format = function(item)
 					local ret = {}
-					ret[#ret + 1] = { item.indicator, item.live and "ClaudeLive" or "ClaudeSession" }
-					ret[#ret + 1] = { item.rel }
+					ret[#ret + 1] = { item.indicator, item.indicator_hl }
+					ret[#ret + 1] = { item.rel, item.is_latest and "ClaudeFileLatest" or nil }
 					if item.stats ~= "" then
 						ret[#ret + 1] = { item.stats, "ClaudeStats" }
 					end
@@ -117,8 +131,19 @@ function M.hunks()
 
 	util.collect_files(function(files, cwd)
 		vim.schedule(function()
+			-- Find the most recently modified file
+			local best_mtime, latest_file = 0, nil
+			for _, f in ipairs(files) do
+				local st = vim.uv.fs_stat(f.abs)
+				if st and st.mtime.sec > best_mtime then
+					best_mtime = st.mtime.sec
+					latest_file = f.abs
+				end
+			end
+
 			local items = {}
 			for _, f in ipairs(files) do
+				local is_latest = latest_file and f.abs == latest_file
 				local old_text = util.get_old_text(f.abs, cwd)
 				local new_text = util.read_file(f.abs) or ""
 				local file_hunks = util.compute_hunks(old_text, new_text)
@@ -126,12 +151,17 @@ function M.hunks()
 					for _, h in ipairs(file_hunks) do
 						local line = math.max(1, h[3])
 						local desc = "+" .. h[4] .. "/-" .. h[2] .. " lines"
+						local indicator = is_latest and "▶ " or "  "
+						local indicator_hl = is_latest and "ClaudeFileLatest" or nil
 						items[#items + 1] = {
 							text = f.rel .. ":" .. line .. " " .. desc,
 							file = f.abs,
 							pos = { line, 0 },
 							desc = desc,
 							rel = f.rel,
+							indicator = indicator,
+							indicator_hl = indicator_hl,
+							is_latest = is_latest,
 						}
 					end
 				end
@@ -140,6 +170,14 @@ function M.hunks()
 			Snacks.picker({
 				title = "Claude Hunks",
 				items = items,
+				format = function(item)
+					local ret = {}
+					ret[#ret + 1] = { item.indicator, item.indicator_hl }
+					ret[#ret + 1] = { item.rel, item.is_latest and "ClaudeFileLatest" or nil }
+					ret[#ret + 1] = { ":" .. item.pos[1] .. " ", "Comment" }
+					ret[#ret + 1] = { item.desc, "ClaudeStats" }
+					return ret
+				end,
 				confirm = function(picker, item)
 					picker:close()
 					vim.cmd("edit " .. vim.fn.fnameescape(item.file))

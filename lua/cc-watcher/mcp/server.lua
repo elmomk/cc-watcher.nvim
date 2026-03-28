@@ -476,11 +476,6 @@ close_client = function(client, reason)
 	-- Remove from clients table
 	clients[client.id] = nil
 
-	if reason then
-		vim.schedule(function()
-			vim.notify("[cc-watcher/mcp] client " .. client.id .. " disconnected: " .. reason, vim.log.levels.DEBUG)
-		end)
-	end
 end
 
 --- Handle new TCP connection
