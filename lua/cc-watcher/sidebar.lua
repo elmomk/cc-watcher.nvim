@@ -107,6 +107,38 @@ local function split_path(rel)
 	return dir or "", name or rel
 end
 
+--- Find longest common directory prefix among a list of relative paths
+---@param files { rel: string }[]
+---@return string prefix (empty string or ends with "/")
+local function common_prefix(files)
+	if #files < 2 then return "" end
+	-- Split first path into directory segments
+	local parts = {}
+	for seg in files[1].rel:gmatch("([^/]+)/") do
+		parts[#parts + 1] = seg
+	end
+	if #parts == 0 then return "" end
+	-- Walk segments, stop when any file diverges
+	local depth = 0
+	for i, seg in ipairs(parts) do
+		local prefix_so_far = table.concat(parts, "/", 1, i) .. "/"
+		local all_match = true
+		for _, f in ipairs(files) do
+			if f.rel:sub(1, #prefix_so_far) ~= prefix_so_far then
+				all_match = false
+				break
+			end
+		end
+		if all_match then
+			depth = i
+		else
+			break
+		end
+	end
+	if depth == 0 then return "" end
+	return table.concat(parts, "/", 1, depth) .. "/"
+end
+
 --- Compute +N/-M stats for a file (from buffer or disk)
 ---@return number add, number del, string stats_str
 local function file_stats(filepath)
@@ -333,8 +365,18 @@ local function do_render(session_files)
 		end
 		if best_file then latest_changed_file = best_file end
 
-		-- Flat list: full relative path per line
+		-- Common prefix: show once, strip from each file
+		local cp = common_prefix(displayed_files)
+		if cp ~= "" then
+			local cp_display = "  " .. cp
+			if #cp_display > WIDTH then cp_display = cp_display:sub(1, WIDTH - 1) .. "…" end
+			table.insert(lines, cp_display)
+			hls[#hls + 1] = { #lines - 1, "ClaudeHelp" }
+		end
+
+		-- Flat list: stripped relative path per line
 		for _, file in ipairs(displayed_files) do
+			local display_rel = cp ~= "" and file.rel:sub(#cp + 1) or file.rel
 			local _, name = split_path(file.rel)
 			local icon, icon_hl = get_icon(name)
 
@@ -361,7 +403,7 @@ local function do_render(session_files)
 			total_add = total_add + add
 			total_del = total_del + del
 
-			local line = prefix .. file.rel
+			local line = prefix .. display_rel
 			if stats ~= "" then
 				local padding = WIDTH - vim.api.nvim_strwidth(line) - vim.api.nvim_strwidth(stats) - 1
 				if padding > 1 then
@@ -391,7 +433,7 @@ local function do_render(session_files)
 			elseif is_latest then
 				hls[#hls + 1] = { cur_ln, "ClaudeFileLatest", 0, -1 }
 			else
-				hls[#hls + 1] = { cur_ln, "ClaudeFile", #prefix, #prefix + #file.rel }
+				hls[#hls + 1] = { cur_ln, "ClaudeFile", #prefix, #prefix + #display_rel }
 			end
 			-- Stats
 			if stats ~= "" then
