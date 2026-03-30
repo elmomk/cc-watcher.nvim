@@ -285,7 +285,8 @@ function M.get_claude_edited_files_async(callback, cwd)
 	for _, fp in ipairs(merged.files) do
 		if fp:sub(1, #cwd_prefix) == cwd_prefix then
 			local rel = fp:sub(#cwd_prefix + 1)
-			if not rel:match("^%.git/") and not rel:match("^%.claude/") then
+			if not rel:match("^%.git/")
+				and (not rel:match("^%.claude/") or rel:match("^%.claude/worktrees/")) then
 				filtered[#filtered + 1] = fp
 			end
 		end
