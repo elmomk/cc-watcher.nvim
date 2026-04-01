@@ -393,87 +393,85 @@ local function do_render(session_files)
 			}
 		end
 
-		-- Collapse single-child chains; merge single-file leaf groups up
-		local function build_groups(node, prefix)
+		-- Build recursive tree with single-child chain collapsing
+		local function build_tree(node, label)
+			label = label or ""
 			local first = next(node.children)
-			-- Compress single-child directory chains (a → b → c becomes "a/b/c/")
 			while first and not next(node.children, first) and #node.files == 0 do
-				prefix = prefix .. first .. "/"
+				label = label .. first .. "/"
 				node = node.children[first]
 				first = next(node.children)
 			end
-
-			if not first then
-				-- Leaf directory — emit group
-				if #node.files > 0 then
-					return { { dir = prefix, files = node.files } }
-				end
-				return {}
-			end
-
-			-- Recurse into children (sorted)
 			local child_names = {}
 			for seg in pairs(node.children) do
 				child_names[#child_names + 1] = seg
 			end
 			table.sort(child_names)
-
-			local sub = {}
+			local children = {}
 			for _, seg in ipairs(child_names) do
-				for _, g in ipairs(build_groups(node.children[seg], prefix .. seg .. "/")) do
-					sub[#sub + 1] = g
-				end
+				children[#children + 1] = build_tree(node.children[seg], seg .. "/")
 			end
-
-			-- If every sub-group has just 1 file, merge them into one parent group
-			-- so we get one header instead of many single-file headers
-			if #node.files == 0 and #sub > 1 then
-				local all_single = true
-				for _, g in ipairs(sub) do
-					if #g.files > 1 then all_single = false; break end
-				end
-				if all_single then
-					local merged = {}
-					for _, g in ipairs(sub) do
-						for _, f in ipairs(g.files) do
-							merged[#merged + 1] = {
-								entry = f.entry,
-								name = g.dir:sub(#prefix + 1) .. f.name,
-								display_rel = f.display_rel,
-							}
-						end
-					end
-					table.sort(merged, function(a, b) return a.name < b.name end)
-					return { { dir = prefix, files = merged } }
-				end
-			end
-
-			local result = {}
-			if #node.files > 0 then
-				result[#result + 1] = { dir = prefix, files = node.files }
-			end
-			for _, g in ipairs(sub) do
-				result[#result + 1] = g
-			end
-			return result
+			return { label = label, files = node.files, children = children }
 		end
 
-		local groups = build_groups(trie, "")
+		local root = build_tree(trie)
+		-- Skip lone top-level branch connector
+		local root_total = #root.children + #root.files
+		local skip_root = root_total == 1
 
-		for _, group in ipairs(groups) do
-			-- Directory header (skip for root-level files)
-			if group.dir ~= "" then
-				local dir_line = "  " .. group.dir
-				if vim.api.nvim_strwidth(dir_line) > WIDTH then
-					dir_line = dir_line:sub(1, WIDTH - 1) .. "…"
+		-- Truncate string by display width (handles multi-byte chars)
+		local function truncate(s, max_width)
+			if vim.api.nvim_strwidth(s) <= max_width then return s end
+			-- Binary search for the byte position that fits
+			local lo, hi = 1, #s
+			while lo < hi do
+				local mid = math.floor((lo + hi + 1) / 2)
+				if vim.api.nvim_strwidth(s:sub(1, mid)) <= max_width - 1 then
+					lo = mid
+				else
+					hi = mid - 1
 				end
+			end
+			return s:sub(1, lo) .. "…"
+		end
+
+		-- Recursive tree renderer (closure over lines, hls, etc.)
+		local function render_node(node, margin, is_last, skip_branch)
+			-- Directory header
+			if node.label ~= "" and not skip_branch then
+				local branch = is_last and "└─ " or "├─ "
+				local dir_line = truncate(margin .. branch .. node.label, WIDTH)
 				table.insert(lines, dir_line)
-				hls[#hls + 1] = { #lines - 1, "ClaudeDir" }
+				local ln = #lines - 1
+				hls[#hls + 1] = { ln, "ClaudeTree", 0, #margin + #branch }
+				hls[#hls + 1] = { ln, "ClaudeDir", #margin + #branch, -1 }
 			end
 
-			for _, item in ipairs(group.files) do
+			-- Child margin
+			local child_margin
+			if skip_branch or node.label == "" then
+				child_margin = margin
+			else
+				child_margin = margin .. (is_last and "   " or "│  ")
+			end
+
+			local total = #node.children + #node.files
+			local idx = 0
+
+			-- Child directories first
+			for _, child in ipairs(node.children) do
+				idx = idx + 1
+				render_node(child, child_margin, idx == total, false)
+			end
+
+			-- Files
+			for _, item in ipairs(node.files) do
+				idx = idx + 1
+				local file_is_last = (idx == total)
+				local branch = file_is_last and "└─ " or "├─ "
+				local tree_prefix = child_margin .. branch
+
 				local file = item.entry
-				local display_name = group.dir ~= "" and item.name or item.display_rel
 				local icon, icon_hl = get_icon(item.name)
 
 				local is_latest_file = not viewing_commit and latest_changed_file and file.abs == latest_changed_file
@@ -489,8 +487,7 @@ local function do_render(session_files)
 					ind_hl = file.live and "ClaudeLive" or "ClaudeSession"
 				end
 
-				local indent = group.dir ~= "" and "    " or "  "
-				local prefix = indent .. indicator .. " " .. icon .. " "
+				local prefix = tree_prefix .. indicator .. " " .. icon .. " "
 				local add, del, stats
 				if viewing_commit then
 					add, del, stats = commit_file_stats(viewing_commit.hash, file.rel)
@@ -500,7 +497,7 @@ local function do_render(session_files)
 				total_add = total_add + add
 				total_del = total_del + del
 
-				local line = prefix .. display_name
+				local line = prefix .. item.name
 				if stats ~= "" then
 					local padding = WIDTH - vim.api.nvim_strwidth(line) - vim.api.nvim_strwidth(stats) - 1
 					if padding > 1 then
@@ -514,12 +511,14 @@ local function do_render(session_files)
 				line_to_file[#lines] = file
 
 				local cur_ln = #lines - 1
+				local tp_bytes = #tree_prefix
+				-- Tree connector highlight (low priority, overridden by others)
+				hls[#hls + 1] = { cur_ln, "ClaudeTree", 0, tp_bytes }
 				-- Indicator highlight
-				local ind_byte_start = #indent
-				hls[#hls + 1] = { cur_ln, ind_hl, ind_byte_start, ind_byte_start + #indicator }
+				hls[#hls + 1] = { cur_ln, ind_hl, tp_bytes, tp_bytes + #indicator }
 				-- Icon highlight
 				if icon_hl then
-					local icon_start = ind_byte_start + #indicator + 1
+					local icon_start = tp_bytes + #indicator + 1
 					hls[#hls + 1] = { cur_ln, icon_hl, icon_start, icon_start + #icon }
 				end
 				-- Path highlights: current file > latest changed > normal
@@ -531,7 +530,7 @@ local function do_render(session_files)
 				elseif is_latest then
 					hls[#hls + 1] = { cur_ln, "ClaudeFileLatest", 0, -1 }
 				else
-					hls[#hls + 1] = { cur_ln, "ClaudeFile", #prefix, #prefix + #display_name }
+					hls[#hls + 1] = { cur_ln, "ClaudeFile", #prefix, #prefix + #item.name }
 				end
 				-- Stats
 				if stats ~= "" then
@@ -539,6 +538,8 @@ local function do_render(session_files)
 				end
 			end
 		end
+
+		render_node(root, "  ", true, skip_root)
 	end
 
 	-- Footer
@@ -564,14 +565,14 @@ local function do_render(session_files)
 
 	-- Apply highlights using extmarks (not deprecated buf_add_highlight)
 	-- Higher priority for file-level highlights so they aren't overridden
-	local high_pri = { ClaudeFileLatest = true, ClaudeFileCurrent = true }
+	local hl_pri = { ClaudeFileLatest = 200, ClaudeFileCurrent = 200, ClaudeTree = 50 }
 	vim.api.nvim_buf_clear_namespace(sidebar_buf, ns, 0, -1)
 	for _, h in ipairs(hls) do
 		pcall(vim.api.nvim_buf_set_extmark, sidebar_buf, ns, h[1], h[3] or 0, {
 			end_col = (h[4] and h[4] >= 0) and h[4] or nil,
 			hl_group = h[2],
 			hl_eol = (h[4] or -1) == -1,
-			priority = high_pri[h[2]] and 200 or 100,
+			priority = hl_pri[h[2]] or 100,
 		})
 	end
 
