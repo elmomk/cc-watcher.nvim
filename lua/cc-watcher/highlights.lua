@@ -20,6 +20,7 @@ local function apply()
 	hl("ClaudeSession",  { link = "DiagnosticInfo" })
 	hl("ClaudeFile",     { link = "Normal" })
 	hl("ClaudeHelp",     { link = "Comment" })
+	hl("ClaudeDir",      { link = "Directory" })
 	hl("ClaudeStats",    { link = "Comment" })
 
 	-- These need resolved fg because link + bold/italic don't combine

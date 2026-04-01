@@ -374,70 +374,169 @@ local function do_render(session_files)
 			hls[#hls + 1] = { #lines - 1, "ClaudeHelp" }
 		end
 
-		-- Flat list: stripped relative path per line
+		-- Build directory trie for smart grouping
+		local trie = { children = {}, files = {} }
 		for _, file in ipairs(displayed_files) do
 			local display_rel = cp ~= "" and file.rel:sub(#cp + 1) or file.rel
-			local _, name = split_path(file.rel)
-			local icon, icon_hl = get_icon(name)
+			local dir, name = split_path(display_rel)
+			local node = trie
+			if dir ~= "" then
+				for seg in dir:gmatch("([^/]+)") do
+					if not node.children[seg] then
+						node.children[seg] = { children = {}, files = {} }
+					end
+					node = node.children[seg]
+				end
+			end
+			node.files[#node.files + 1] = {
+				entry = file, name = name, display_rel = display_rel
+			}
+		end
 
-			local is_latest_file = not viewing_commit and latest_changed_file and file.abs == latest_changed_file
-			local indicator, ind_hl
-			if viewing_commit then
-				indicator = "◆"
-				ind_hl = "ClaudeSession"
-			elseif is_latest_file then
-				indicator = "▶"
-				ind_hl = "ClaudeFileLatest"
-			else
-				indicator = file.live and "●" or "○"
-				ind_hl = file.live and "ClaudeLive" or "ClaudeSession"
+		-- Collapse single-child chains; merge single-file leaf groups up
+		local function build_groups(node, prefix)
+			local first = next(node.children)
+			-- Compress single-child directory chains (a → b → c becomes "a/b/c/")
+			while first and not next(node.children, first) and #node.files == 0 do
+				prefix = prefix .. first .. "/"
+				node = node.children[first]
+				first = next(node.children)
 			end
 
-			local prefix = "  " .. indicator .. " " .. icon .. " "
-			local add, del, stats
-			if viewing_commit then
-				add, del, stats = commit_file_stats(viewing_commit.hash, file.rel)
-			else
-				add, del, stats = file_stats(file.abs)
+			if not first then
+				-- Leaf directory — emit group
+				if #node.files > 0 then
+					return { { dir = prefix, files = node.files } }
+				end
+				return {}
 			end
-			total_add = total_add + add
-			total_del = total_del + del
 
-			local line = prefix .. display_rel
-			if stats ~= "" then
-				local padding = WIDTH - vim.api.nvim_strwidth(line) - vim.api.nvim_strwidth(stats) - 1
-				if padding > 1 then
-					line = line .. string.rep(" ", padding) .. stats
-				else
-					line = line .. " " .. stats
+			-- Recurse into children (sorted)
+			local child_names = {}
+			for seg in pairs(node.children) do
+				child_names[#child_names + 1] = seg
+			end
+			table.sort(child_names)
+
+			local sub = {}
+			for _, seg in ipairs(child_names) do
+				for _, g in ipairs(build_groups(node.children[seg], prefix .. seg .. "/")) do
+					sub[#sub + 1] = g
 				end
 			end
 
-			table.insert(lines, line)
-			line_to_file[#lines] = file
+			-- If every sub-group has just 1 file, merge them into one parent group
+			-- so we get one header instead of many single-file headers
+			if #node.files == 0 and #sub > 1 then
+				local all_single = true
+				for _, g in ipairs(sub) do
+					if #g.files > 1 then all_single = false; break end
+				end
+				if all_single then
+					local merged = {}
+					for _, g in ipairs(sub) do
+						for _, f in ipairs(g.files) do
+							merged[#merged + 1] = {
+								entry = f.entry,
+								name = g.dir:sub(#prefix + 1) .. f.name,
+								display_rel = f.display_rel,
+							}
+						end
+					end
+					table.sort(merged, function(a, b) return a.name < b.name end)
+					return { { dir = prefix, files = merged } }
+				end
+			end
 
-			local cur_ln = #lines - 1
-			-- Indicator highlight
-			hls[#hls + 1] = { cur_ln, ind_hl, 2, 2 + #indicator }
-			-- Icon highlight
-			if icon_hl then
-				local icon_start = 2 + #indicator + 1
-				hls[#hls + 1] = { cur_ln, icon_hl, icon_start, icon_start + #icon }
+			local result = {}
+			if #node.files > 0 then
+				result[#result + 1] = { dir = prefix, files = node.files }
 			end
-			-- Path highlights: current file > latest changed > normal
-			local is_current = current_file and file.abs == current_file
-			local is_latest = not viewing_commit and latest_changed_file and file.abs == latest_changed_file
-			if is_current then
-				hls[#hls + 1] = { cur_ln, "ClaudeFileCurrent", 0, -1 }
-				current_file_row = #lines
-			elseif is_latest then
-				hls[#hls + 1] = { cur_ln, "ClaudeFileLatest", 0, -1 }
-			else
-				hls[#hls + 1] = { cur_ln, "ClaudeFile", #prefix, #prefix + #display_rel }
+			for _, g in ipairs(sub) do
+				result[#result + 1] = g
 			end
-			-- Stats
-			if stats ~= "" then
-				hls[#hls + 1] = { cur_ln, "ClaudeStats", #line - #stats, -1 }
+			return result
+		end
+
+		local groups = build_groups(trie, "")
+
+		for _, group in ipairs(groups) do
+			-- Directory header (skip for root-level files)
+			if group.dir ~= "" then
+				local dir_line = "  " .. group.dir
+				if vim.api.nvim_strwidth(dir_line) > WIDTH then
+					dir_line = dir_line:sub(1, WIDTH - 1) .. "…"
+				end
+				table.insert(lines, dir_line)
+				hls[#hls + 1] = { #lines - 1, "ClaudeDir" }
+			end
+
+			for _, item in ipairs(group.files) do
+				local file = item.entry
+				local display_name = group.dir ~= "" and item.name or item.display_rel
+				local icon, icon_hl = get_icon(item.name)
+
+				local is_latest_file = not viewing_commit and latest_changed_file and file.abs == latest_changed_file
+				local indicator, ind_hl
+				if viewing_commit then
+					indicator = "◆"
+					ind_hl = "ClaudeSession"
+				elseif is_latest_file then
+					indicator = "▶"
+					ind_hl = "ClaudeFileLatest"
+				else
+					indicator = file.live and "●" or "○"
+					ind_hl = file.live and "ClaudeLive" or "ClaudeSession"
+				end
+
+				local indent = group.dir ~= "" and "    " or "  "
+				local prefix = indent .. indicator .. " " .. icon .. " "
+				local add, del, stats
+				if viewing_commit then
+					add, del, stats = commit_file_stats(viewing_commit.hash, file.rel)
+				else
+					add, del, stats = file_stats(file.abs)
+				end
+				total_add = total_add + add
+				total_del = total_del + del
+
+				local line = prefix .. display_name
+				if stats ~= "" then
+					local padding = WIDTH - vim.api.nvim_strwidth(line) - vim.api.nvim_strwidth(stats) - 1
+					if padding > 1 then
+						line = line .. string.rep(" ", padding) .. stats
+					else
+						line = line .. " " .. stats
+					end
+				end
+
+				table.insert(lines, line)
+				line_to_file[#lines] = file
+
+				local cur_ln = #lines - 1
+				-- Indicator highlight
+				local ind_byte_start = #indent
+				hls[#hls + 1] = { cur_ln, ind_hl, ind_byte_start, ind_byte_start + #indicator }
+				-- Icon highlight
+				if icon_hl then
+					local icon_start = ind_byte_start + #indicator + 1
+					hls[#hls + 1] = { cur_ln, icon_hl, icon_start, icon_start + #icon }
+				end
+				-- Path highlights: current file > latest changed > normal
+				local is_current = current_file and file.abs == current_file
+				local is_latest = not viewing_commit and latest_changed_file and file.abs == latest_changed_file
+				if is_current then
+					hls[#hls + 1] = { cur_ln, "ClaudeFileCurrent", 0, -1 }
+					current_file_row = #lines
+				elseif is_latest then
+					hls[#hls + 1] = { cur_ln, "ClaudeFileLatest", 0, -1 }
+				else
+					hls[#hls + 1] = { cur_ln, "ClaudeFile", #prefix, #prefix + #display_name }
+				end
+				-- Stats
+				if stats ~= "" then
+					hls[#hls + 1] = { cur_ln, "ClaudeStats", #line - #stats, -1 }
+				end
 			end
 		end
 	end
