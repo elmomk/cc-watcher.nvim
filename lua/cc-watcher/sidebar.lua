@@ -113,30 +113,23 @@ end
 local function common_prefix(files)
 	if #files < 2 then return "" end
 	-- Split first path into directory segments
-	local parts = {}
+	local ref_parts = {}
 	for seg in files[1].rel:gmatch("([^/]+)/") do
-		parts[#parts + 1] = seg
+		ref_parts[#ref_parts + 1] = seg
 	end
-	if #parts == 0 then return "" end
-	-- Walk segments, stop when any file diverges
+	if #ref_parts == 0 then return "" end
+	-- Walk segments, return immediately when any file diverges
 	local depth = 0
-	for i, seg in ipairs(parts) do
-		local prefix_so_far = table.concat(parts, "/", 1, i) .. "/"
-		local all_match = true
-		for _, f in ipairs(files) do
-			if f.rel:sub(1, #prefix_so_far) ~= prefix_so_far then
-				all_match = false
-				break
+	for i, _ in ipairs(ref_parts) do
+		local prefix_so_far = table.concat(ref_parts, "/", 1, i) .. "/"
+		for j = 2, #files do
+			if files[j].rel:sub(1, #prefix_so_far) ~= prefix_so_far then
+				return depth == 0 and "" or table.concat(ref_parts, "/", 1, depth) .. "/"
 			end
 		end
-		if all_match then
-			depth = i
-		else
-			break
-		end
+		depth = i
 	end
-	if depth == 0 then return "" end
-	return table.concat(parts, "/", 1, depth) .. "/"
+	return depth == 0 and "" or table.concat(ref_parts, "/", 1, depth) .. "/"
 end
 
 --- Compute +N/-M stats for a file (from buffer or disk)
@@ -164,6 +157,56 @@ local function file_stats(filepath)
 		end
 	end
 	return 0, 0, ""
+end
+
+--- Truncate string by display width (handles multi-byte chars)
+---@param s string
+---@param max_width number
+---@return string
+local function truncate(s, max_width)
+	if vim.api.nvim_strwidth(s) <= max_width then return s end
+	-- Binary search for the byte position that fits
+	local lo, hi = 1, #s
+	while lo < hi do
+		local mid = math.floor((lo + hi + 1) / 2)
+		if vim.api.nvim_strwidth(s:sub(1, mid)) <= max_width - 1 then
+			lo = mid
+		else
+			hi = mid - 1
+		end
+	end
+	return s:sub(1, lo) .. "…"
+end
+
+--- Build recursive tree from trie with single-child chain collapsing.
+--- Chains like a/ -> b/ -> c/ with no files at a or b collapse to "a/b/c/".
+---@param node table trie node { children: table, files: table }
+---@param label string|nil accumulated label for collapsed chains
+---@param depth number|nil recursion depth (guard against pathological nesting)
+---@return table tree node { label: string, files: table, children: table[] }
+local function build_tree(node, label, depth)
+	label = label or ""
+	depth = (depth or 0) + 1
+	if depth > 50 then return { label = label, files = node.files, children = {} } end
+
+	-- next() on a hash table has non-deterministic key order, but here we only
+	-- use it to check "exactly one child exists" — the specific key doesn't matter.
+	local first = next(node.children)
+	while first and not next(node.children, first) and #node.files == 0 do
+		label = label .. first .. "/"
+		node = node.children[first]
+		first = next(node.children)
+	end
+	local child_names = {}
+	for seg in pairs(node.children) do
+		child_names[#child_names + 1] = seg
+	end
+	table.sort(child_names)
+	local children = {}
+	for _, seg in ipairs(child_names) do
+		children[#children + 1] = build_tree(node.children[seg], seg .. "/", depth)
+	end
+	return { label = label, files = node.files, children = children }
 end
 
 --- Load commit history, cross-referencing with JSONL session files
@@ -368,8 +411,7 @@ local function do_render(session_files)
 		-- Common prefix: show once, strip from each file
 		local cp = common_prefix(displayed_files)
 		if cp ~= "" then
-			local cp_display = "  " .. cp
-			if #cp_display > WIDTH then cp_display = cp_display:sub(1, WIDTH - 1) .. "…" end
+			local cp_display = truncate("  " .. cp, WIDTH)
 			table.insert(lines, cp_display)
 			hls[#hls + 1] = { #lines - 1, "ClaudeHelp" }
 		end
@@ -393,50 +435,16 @@ local function do_render(session_files)
 			}
 		end
 
-		-- Build recursive tree with single-child chain collapsing
-		local function build_tree(node, label)
-			label = label or ""
-			local first = next(node.children)
-			while first and not next(node.children, first) and #node.files == 0 do
-				label = label .. first .. "/"
-				node = node.children[first]
-				first = next(node.children)
-			end
-			local child_names = {}
-			for seg in pairs(node.children) do
-				child_names[#child_names + 1] = seg
-			end
-			table.sort(child_names)
-			local children = {}
-			for _, seg in ipairs(child_names) do
-				children[#children + 1] = build_tree(node.children[seg], seg .. "/")
-			end
-			return { label = label, files = node.files, children = children }
-		end
-
 		local root = build_tree(trie)
-		-- Skip lone top-level branch connector
+		-- When the root has exactly one entry (one dir or one file), skip drawing
+		-- a branch connector for it — no point showing └─ for a single top node.
 		local root_total = #root.children + #root.files
 		local skip_root = root_total == 1
 
-		-- Truncate string by display width (handles multi-byte chars)
-		local function truncate(s, max_width)
-			if vim.api.nvim_strwidth(s) <= max_width then return s end
-			-- Binary search for the byte position that fits
-			local lo, hi = 1, #s
-			while lo < hi do
-				local mid = math.floor((lo + hi + 1) / 2)
-				if vim.api.nvim_strwidth(s:sub(1, mid)) <= max_width - 1 then
-					lo = mid
-				else
-					hi = mid - 1
-				end
-			end
-			return s:sub(1, lo) .. "…"
-		end
-
 		-- Recursive tree renderer (closure over lines, hls, etc.)
-		local function render_node(node, margin, is_last, skip_branch)
+		local function render_node(node, margin, is_last, skip_branch, depth)
+			depth = (depth or 0) + 1
+			if depth > 50 then return end
 			-- Directory header
 			if node.label ~= "" and not skip_branch then
 				local branch = is_last and "└─ " or "├─ "
@@ -455,19 +463,19 @@ local function do_render(session_files)
 				child_margin = margin .. (is_last and "   " or "│  ")
 			end
 
-			local total = #node.children + #node.files
+			local node_count = #node.children + #node.files
 			local idx = 0
 
 			-- Child directories first
 			for _, child in ipairs(node.children) do
 				idx = idx + 1
-				render_node(child, child_margin, idx == total, false)
+				render_node(child, child_margin, idx == node_count, false, depth)
 			end
 
 			-- Files
 			for _, item in ipairs(node.files) do
 				idx = idx + 1
-				local file_is_last = (idx == total)
+				local file_is_last = (idx == node_count)
 				local branch = file_is_last and "└─ " or "├─ "
 				local tree_prefix = child_margin .. branch
 
@@ -488,6 +496,8 @@ local function do_render(session_files)
 				end
 
 				local prefix = tree_prefix .. indicator .. " " .. icon .. " "
+				-- Stats use file.rel / file.abs (original paths), NOT the
+				-- prefix-stripped display_rel — git needs the real path.
 				local add, del, stats
 				if viewing_commit then
 					add, del, stats = commit_file_stats(viewing_commit.hash, file.rel)
@@ -511,6 +521,8 @@ local function do_render(session_files)
 				line_to_file[#lines] = file
 
 				local cur_ln = #lines - 1
+				-- Extmark col positions are byte-indexed, so # (byte length) is
+				-- correct here even though tree chars (├─ etc.) are multi-byte.
 				local tp_bytes = #tree_prefix
 				-- Tree connector highlight (low priority, overridden by others)
 				hls[#hls + 1] = { cur_ln, "ClaudeTree", 0, tp_bytes }
