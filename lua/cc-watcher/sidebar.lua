@@ -419,6 +419,13 @@ local function do_render(session_files)
 			hls[#hls + 1] = { #lines - 1, "ClaudeHelp" }
 		end
 
+		-- Compute display-relative path of the latest changed file
+		local latest_display_rel = nil
+		if latest_changed_file and not viewing_commit then
+			local latest_rel = relpath(latest_changed_file)
+			latest_display_rel = cp ~= "" and latest_rel:sub(#cp + 1) or latest_rel
+		end
+
 		-- Build directory trie for smart grouping
 		local trie = { children = {}, files = {} }
 		for _, file in ipairs(displayed_files) do
@@ -460,8 +467,11 @@ local function do_render(session_files)
 				table.insert(lines, dir_line)
 				local ln = #lines - 1
 				line_to_dir[#lines] = dir_path
+				local is_latest_ancestor = latest_display_rel
+					and dir_path ~= "" and latest_display_rel:sub(1, #dir_path) == dir_path
 				hls[#hls + 1] = { ln, "ClaudeTree", 0, #margin + #branch }
-				hls[#hls + 1] = { ln, "ClaudeDir", #margin + #branch, -1 }
+				hls[#hls + 1] = { ln, is_latest_ancestor and "ClaudeDirLatest" or "ClaudeDir",
+					#margin + #branch, -1 }
 			end
 
 			-- Skip children when folded

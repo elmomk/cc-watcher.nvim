@@ -29,6 +29,7 @@ local function apply()
 	local warn_fg = vim.api.nvim_get_hl(0, { name = "DiagnosticWarn" }).fg
 	hl("ClaudeFileCurrent", { fg = normal_fg, bold = true, underline = true })
 	hl("ClaudeFileLatest",  { fg = warn_fg or normal_fg, bold = true, italic = true })
+	hl("ClaudeDirLatest",   { fg = warn_fg or normal_fg, bold = true })
 
 	-- Diff inline: link to built-in diff groups
 	hl("ClaudeDiffAdd",        { link = "DiffAdd" })
