@@ -15,6 +15,8 @@ local HEADER_LINES = 3 -- title, status, separator
 
 local displayed_files = {}
 local line_to_file = {} -- line number -> file entry, rebuilt each render
+local line_to_dir = {} -- line number -> dir path key, rebuilt each render
+local folded_dirs = {} -- dir path key -> true when collapsed
 local latest_changed_file = nil -- abs path of most recently changed file
 
 -- History state
@@ -305,6 +307,7 @@ local function do_render(session_files)
 
 	local WIDTH = get_width()
 	line_to_file = {}
+	line_to_dir = {}
 
 	-- Find the file open in the main editor window
 	local current_file = nil
@@ -442,18 +445,27 @@ local function do_render(session_files)
 		local skip_root = root_total == 1
 
 		-- Recursive tree renderer (closure over lines, hls, etc.)
-		local function render_node(node, margin, is_last, skip_branch, depth)
+		local function render_node(node, margin, is_last, skip_branch, depth, parent_path)
 			depth = (depth or 0) + 1
 			if depth > 50 then return end
+			local dir_path = (parent_path or "") .. node.label
 			-- Directory header
+			local is_folded = false
 			if node.label ~= "" and not skip_branch then
+				is_folded = folded_dirs[dir_path] or false
+				local fold_icon = (#node.children > 0 or #node.files > 0)
+					and (is_folded and " ▸" or " ▾") or ""
 				local branch = is_last and "└─ " or "├─ "
-				local dir_line = truncate(margin .. branch .. node.label, WIDTH)
+				local dir_line = truncate(margin .. branch .. node.label .. fold_icon, WIDTH)
 				table.insert(lines, dir_line)
 				local ln = #lines - 1
+				line_to_dir[#lines] = dir_path
 				hls[#hls + 1] = { ln, "ClaudeTree", 0, #margin + #branch }
 				hls[#hls + 1] = { ln, "ClaudeDir", #margin + #branch, -1 }
 			end
+
+			-- Skip children when folded
+			if is_folded then return end
 
 			-- Child margin
 			local child_margin
@@ -469,7 +481,7 @@ local function do_render(session_files)
 			-- Child directories first
 			for _, child in ipairs(node.children) do
 				idx = idx + 1
-				render_node(child, child_margin, idx == node_count, false, depth)
+				render_node(child, child_margin, idx == node_count, false, depth, dir_path)
 			end
 
 			-- Files
@@ -614,7 +626,7 @@ local function show_help()
 		"│  cc-watcher.nvim               │",
 		"│                                │",
 		"│  Sidebar:                      │",
-		"│    <CR>/d/o Open file with diff │",
+		"│    <CR>/d/o Open file / fold dir │",
 		"│    S       Pick session        │",
 		"│    r       Refresh             │",
 		"│    H       Toggle history      │",
@@ -691,7 +703,21 @@ function M.open()
 
 	local opts = { buffer = sidebar_buf, nowait = true, silent = true }
 
+	local function toggle_dir_at_cursor()
+		if not is_open() then return false end
+		local row = vim.api.nvim_win_get_cursor(sidebar_win)[1]
+		local dir = line_to_dir[row]
+		if not dir then return false end
+		folded_dirs[dir] = not folded_dirs[dir]
+		M.render()
+		-- Restore cursor to same row
+		pcall(vim.api.nvim_win_set_cursor, sidebar_win, { row, 0 })
+		return true
+	end
+
 	local function open_with_diff()
+		-- If on a directory line, toggle fold instead
+		if toggle_dir_at_cursor() then return end
 		local f = file_at_cursor()
 		if not f then
 			vim.notify("No file on this line", vim.log.levels.INFO)
