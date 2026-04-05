@@ -562,10 +562,19 @@ local function do_render(session_files)
 					suffix = time_str
 				end
 
-				local line = prefix .. item.name
-				local suffix_start_byte = #line -- track where suffix begins
+				-- Truncate filename if needed to keep suffix visible
+				local prefix_w = vim.api.nvim_strwidth(prefix)
+				local suffix_w = suffix ~= "" and vim.api.nvim_strwidth(suffix) or 0
+				local name_budget = WIDTH - prefix_w - suffix_w - (suffix ~= "" and 2 or 0)
+				local display_name = item.name
+				if name_budget > 3 and vim.api.nvim_strwidth(display_name) > name_budget then
+					display_name = truncate(display_name, name_budget)
+				end
+
+				local line = prefix .. display_name
+				local suffix_start_byte = #line
 				if suffix ~= "" then
-					local padding = WIDTH - vim.api.nvim_strwidth(line) - vim.api.nvim_strwidth(suffix) - 1
+					local padding = WIDTH - vim.api.nvim_strwidth(line) - suffix_w - 1
 					if padding > 1 then
 						line = line .. string.rep(" ", padding) .. suffix
 					else
@@ -599,7 +608,7 @@ local function do_render(session_files)
 				elseif is_latest then
 					hls[#hls + 1] = { cur_ln, "ClaudeFileLatest", 0, -1 }
 				else
-					hls[#hls + 1] = { cur_ln, "ClaudeFile", #prefix, #prefix + #item.name }
+					hls[#hls + 1] = { cur_ln, "ClaudeFile", #prefix, #prefix + #display_name }
 				end
 				-- Time + Stats highlights on the suffix
 				if suffix ~= "" then
