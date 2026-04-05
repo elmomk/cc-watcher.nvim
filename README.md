@@ -6,7 +6,7 @@ Designed for a **tmux split workflow**: Claude Code on the left, Neovim on the r
 
 ## Features
 
-- **Sidebar** — flat list of all files Claude has edited (full relative paths), updated live with +N/-M stats, 100-column default width
+- **Sidebar** — tree-style file list with directory grouping, modification times, +N/-M stats, updated live
 - **Inline diff** — colored highlights showing exactly what changed (no split windows)
 - **Sign column indicators** — green/yellow/red bars on changed lines
 - **Hunk navigation** — `]c` / `[c` to jump between changes, `cr` to revert a hunk
@@ -21,6 +21,50 @@ Designed for a **tmux split workflow**: Claude Code on the left, Neovim on the r
   - [Snacks picker](#snacks-picker) — fuzzy find changed files and hunks with colored diff preview (for [LazyVim](https://www.lazyvim.org/) / snacks.nvim users)
   - [trouble.nvim](#troublenvim) — diagnostic-like list of all changes
   - [Diffview](#diffview) — side-by-side snapshot diff in a tab
+
+## Screenshots
+
+### Sidebar
+
+Tree-style file list with directory grouping, collapsible folders, modification times, and +N/-M diff stats.
+
+![Sidebar](assets/sidebar.png)
+
+### Inline Diff
+
+Colored inline highlights showing exactly what Claude changed — added, modified, and deleted lines.
+
+![Inline Diff](assets/inline-diff.png)
+
+### Snacks Picker — Changed Files
+
+Fuzzy-find changed files with colored diff preview.
+
+![Snacks Picker](assets/snacks-picker.png)
+
+### Snacks Picker — Hunks
+
+Browse individual hunks across all changed files.
+
+![Snacks Hunks](assets/snacks-hunks.png)
+
+### trouble.nvim
+
+Diagnostic-like list of all Claude changes.
+
+![Trouble](assets/trouble.png)
+
+### Diffview
+
+Side-by-side diff comparing pre-Claude snapshot (left) with current file (right).
+
+![Diffview](assets/diffview.png)
+
+### Session Picker
+
+Switch between Claude Code conversations for the current project.
+
+![Session Picker](assets/session-picker.png)
 
 ## How it works
 
