@@ -574,12 +574,7 @@ local function do_render(session_files)
 				local line = prefix .. display_name
 				local suffix_start_byte = #line
 				if suffix ~= "" then
-					local padding = WIDTH - vim.api.nvim_strwidth(line) - suffix_w - 1
-					if padding > 1 then
-						line = line .. string.rep(" ", padding) .. suffix
-					else
-						line = line .. " " .. suffix
-					end
+					line = line .. "  " .. suffix
 					suffix_start_byte = #line - #suffix
 				end
 
