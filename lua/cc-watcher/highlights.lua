@@ -23,6 +23,7 @@ local function apply()
 	hl("ClaudeDir",      { link = "Directory" })
 	hl("ClaudeTree",     { link = "Comment" })
 	hl("ClaudeStats",    { link = "Comment" })
+	hl("ClaudeTime",     { link = "Comment" })
 
 	-- These need resolved fg because link + bold/italic don't combine
 	local normal_fg = vim.api.nvim_get_hl(0, { name = "Normal" }).fg

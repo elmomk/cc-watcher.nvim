@@ -66,6 +66,20 @@ end
 local _devicons = nil
 local _devicons_checked = false
 
+--- Format a unix timestamp as a short relative time string
+local function format_relative_time(mtime_sec)
+	local now = os.time()
+	local diff_s = now - mtime_sec
+	if diff_s < 0 then diff_s = 0 end
+	if diff_s < 60 then return diff_s .. "s" end
+	local mins = math.floor(diff_s / 60)
+	if mins < 60 then return mins .. "m" end
+	local hours = math.floor(mins / 60)
+	if hours < 24 then return hours .. "h" end
+	local days = math.floor(hours / 24)
+	return days .. "d"
+end
+
 local function get_icon(name)
 	if not _devicons_checked then
 		_devicons_checked = true
@@ -529,14 +543,35 @@ local function do_render(session_files)
 				total_add = total_add + add
 				total_del = total_del + del
 
-				local line = prefix .. item.name
-				if stats ~= "" then
-					local padding = WIDTH - vim.api.nvim_strwidth(line) - vim.api.nvim_strwidth(stats) - 1
-					if padding > 1 then
-						line = line .. string.rep(" ", padding) .. stats
-					else
-						line = line .. " " .. stats
+				-- Modification time
+				local time_str = ""
+				if not viewing_commit then
+					local st = vim.uv.fs_stat(file.abs)
+					if st then
+						time_str = format_relative_time(st.mtime.sec)
 					end
+				end
+
+				-- Build right-aligned suffix: "time  +X -Y" or just "time"
+				local suffix = ""
+				if stats ~= "" and time_str ~= "" then
+					suffix = time_str .. "  " .. stats
+				elseif stats ~= "" then
+					suffix = stats
+				elseif time_str ~= "" then
+					suffix = time_str
+				end
+
+				local line = prefix .. item.name
+				local suffix_start_byte = #line -- track where suffix begins
+				if suffix ~= "" then
+					local padding = WIDTH - vim.api.nvim_strwidth(line) - vim.api.nvim_strwidth(suffix) - 1
+					if padding > 1 then
+						line = line .. string.rep(" ", padding) .. suffix
+					else
+						line = line .. " " .. suffix
+					end
+					suffix_start_byte = #line - #suffix
 				end
 
 				table.insert(lines, line)
@@ -566,9 +601,18 @@ local function do_render(session_files)
 				else
 					hls[#hls + 1] = { cur_ln, "ClaudeFile", #prefix, #prefix + #item.name }
 				end
-				-- Stats
-				if stats ~= "" then
-					hls[#hls + 1] = { cur_ln, "ClaudeStats", #line - #stats, -1 }
+				-- Time + Stats highlights on the suffix
+				if suffix ~= "" then
+					if time_str ~= "" and stats ~= "" then
+						-- Time portion
+						hls[#hls + 1] = { cur_ln, "ClaudeTime", suffix_start_byte, suffix_start_byte + #time_str }
+						-- Stats portion
+						hls[#hls + 1] = { cur_ln, "ClaudeStats", #line - #stats, -1 }
+					elseif stats ~= "" then
+						hls[#hls + 1] = { cur_ln, "ClaudeStats", suffix_start_byte, -1 }
+					else
+						hls[#hls + 1] = { cur_ln, "ClaudeTime", suffix_start_byte, -1 }
+					end
 				end
 			end
 		end
